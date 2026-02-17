@@ -2,7 +2,8 @@ name: Azure Static Web Apps CI/CD
 
 on:
   push:
-    branches: pull_request:
+    branches: [ "main" ]
+  pull_request:
     types: branches: jobs:
   build_and_deploy_job:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
@@ -16,10 +17,10 @@ on:
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
         with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_YOUR_TOKEN_HERE }}  # <-- keep your token line
-          repo_token: ${{ secrets.GITHUB_TOKEN }}  # <-- keep this too
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_YOUR_TOKEN_HERE }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: "upload"
-          app_location: "/"       # root folder
-          api_location: ""        # no API yet
-          output_location: ""     # no build output
-          skip_app_build: true    # <-- this skips Oryx/Node entirely!
+          app_location: "/"
+          api_location: ""
+          output_location: ""
+          skip_app_build: true
