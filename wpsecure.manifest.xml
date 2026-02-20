@@ -1,20 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" 
-           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
-           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" 
-           xmlns:ov="http://schemas.microsoft.com/office/mailappversionoverrides/1.1" 
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:ov="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
            xsi:type="MailApp">
   <Id>00000000-0000-0000-0000-000000000000</Id>
   <Version>1.0.0.0</Version>
   <ProviderName>WPSecure</ProviderName>
-  <DefaultLocale>en-US</DefaultLocale>
+  <DefaultLocale>EN-US</DefaultLocale>
   <DisplayName DefaultValue="WPSecure" />
-  <Description DefaultValue="WPSecure inserts organization-approved signatures from the user's OneDrive /.wpsecure folder."/>
+  <Description DefaultValue="WPSecure inserts organization‑approved signatures from the user's OneDrive /.wpsecure folder."/>
 
   <IconUrl DefaultValue="https://wpsecure.blob.core.windows.net/$web/assets/icon-32.png" />
   <HighResolutionIconUrl DefaultValue="https://wpsecure.blob.core.windows.net/$web/assets/icon-80.png" />
-  
-  <SupportUrl DefaultValue="https://wpsecure.blob.core.windows.net/$web/" />
 
   <Requirements>
     <Sets DefaultMinVersion="1.10">
@@ -22,28 +20,19 @@
     </Sets>
   </Requirements>
 
-  <FormSettings>
-    <Form xsi:type="ItemRead">
-      <DesktopSettings>
-        <SourceLocation DefaultValue="https://wpsecure.blob.core.windows.net/$web/wpsecure.html" />
-      </DesktopSettings>
-    </Form>
-  </FormSettings>
-
   <Permissions>ReadWriteItem</Permissions>
   <Rule xsi:type="RuleCollection" Mode="Or">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Edit"/>
     <Rule xsi:type="ItemIs" ItemType="Appointment" FormType="Edit"/>
   </Rule>
 
-  <DisableEntityHighlighting>false</DisableEntityHighlighting>
-
   <VersionOverrides xsi:type="ov:VersionOverridesV1_1">
     <ov:Hosts>
       <ov:Host xsi:type="ov:MailHost">
         <ov:DesktopFormFactor>
-          <ov:FunctionFile resid="WPSecure.Function.Url" />
-          
+          <!-- No task pane. Keep a FunctionFile for command runtime hosting. -->
+          <ov:FunctionFile resid="WPSecure.Function.Url"/>
+
           <ov:ExtensionPoint xsi:type="ov:MessageComposeCommandSurface">
             <ov:OfficeTab id="TabDefault">
               <ov:Group id="WPSecure.Group">
@@ -55,9 +44,9 @@
                     <ov:Description resid="WPSecure.Button.Tooltip" />
                   </ov:Supertip>
                   <ov:Icon>
-                    <ov:bt:Image size="16" resid="WPSecure.Icon.16"/>
-                    <ov:bt:Image size="32" resid="WPSecure.Icon.32"/>
-                    <ov:bt:Image size="80" resid="WPSecure.Icon.80"/>
+                    <ov:bt:Image size="16" resid="WPSecure.Icon.16" />
+                    <ov:bt:Image size="32" resid="WPSecure.Icon.32" />
+                    <ov:bt:Image size="80" resid="WPSecure.Icon.80" />
                   </ov:Icon>
                   <ov:Action xsi:type="ov:ExecuteFunction">
                     <ov:FunctionName>WPSecure_Reinsert</ov:FunctionName>
@@ -78,9 +67,9 @@
                     <ov:Description resid="WPSecure.Button.Tooltip" />
                   </ov:Supertip>
                   <ov:Icon>
-                    <ov:bt:Image size="16" resid="WPSecure.Icon.16"/>
-                    <ov:bt:Image size="32" resid="WPSecure.Icon.32"/>
-                    <ov:bt:Image size="80" resid="WPSecure.Icon.80"/>
+                    <ov:bt:Image size="16" resid="WPSecure.Icon.16" />
+                    <ov:bt:Image size="32" resid="WPSecure.Icon.32" />
+                    <ov:bt:Image size="80" resid="WPSecure.Icon.80" />
                   </ov:Icon>
                   <ov:Action xsi:type="ov:ExecuteFunction">
                     <ov:FunctionName>WPSecure_Reinsert</ov:FunctionName>
@@ -90,13 +79,13 @@
             </ov:OfficeTab>
           </ov:ExtensionPoint>
 
+          <!-- Event-based activation for messages only (silent preload/insert). -->
           <ov:ExtensionPoint xsi:type="ov:LaunchEvent">
             <ov:LaunchEvents>
-              <ov:LaunchEvent Type="OnMessageCompose" FunctionName="WPSecure_OnMessageCompose"/>
+              <ov:LaunchEvent Type="OnMessageCompose" FunctionName="WPSecure_OnMessageCompose" />
             </ov:LaunchEvents>
-            <ov:SourceLocation resid="WPSecure.Runtime.Url"/>
+            <ov:SourceLocation resid="WPSecure.Runtime.Url" />
           </ov:ExtensionPoint>
-
         </ov:DesktopFormFactor>
       </ov:Host>
     </ov:Hosts>
@@ -115,13 +104,14 @@
       <ov:Strings>
         <ov:String id="WPSecure.Group.Label" DefaultValue="WPSecure" />
         <ov:String id="WPSecure.Button.Label" DefaultValue="WPSecure" />
-        <ov:String id="WPSecure.Button.Tooltip" DefaultValue="Re-insert the approved signature" />
+        <ov:String id="WPSecure.Button.Tooltip" DefaultValue="Re‑insert the approved signature" />
       </ov:Strings>
     </ov:Resources>
 
+    <!-- Shared runtime for events + execute functions (no visible pane). -->
     <ov:Runtimes>
       <ov:Runtime resid="WPSecure.Runtime.Url">
-        <ov:Override type="javascript" resid="WPSecure.Script.Url"/>
+        <ov:Override type="javascript" resid="WPSecure.Script.Url" />
       </ov:Runtime>
     </ov:Runtimes>
 
