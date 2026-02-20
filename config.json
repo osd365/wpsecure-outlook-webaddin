@@ -5,11 +5,11 @@
     "Files.Read"
   ],
   "REDIRECT_ORIGIN": "wpsecure.z20.web.core.windows.net",
-  "TEMPLATE_PATHS": {
-    "newHtml": "/.wpsecure/wpsecure_cloud_new.htm",
-    "replyHtml": "/.wpsecure/wpsecure_cloud_reply.htm",
-    "newText": "/.wpsecure/wpsecure_cloud_new.txt",
-    "replyText": "/.wpsecure/wpsecure_cloud_reply.txt"
+"TEMPLATE_PATHS": {
+    "newHtml": "/.wpsecure/wpsecure_cloud_new ({email}).htm",
+    "replyHtml": "/.wpsecure/wpsecure_cloud_reply ({email}).htm",
+    "newText": "/.wpsecure/wpsecure_cloud_new ({email}).txt",
+    "replyText": "/.wpsecure/wpsecure_cloud_reply ({email}).txt"
   },
   "STRICT_FORMAT": true,
   "RETRY_CAP_EVENT": 10,

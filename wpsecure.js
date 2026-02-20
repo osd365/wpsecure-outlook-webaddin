@@ -94,14 +94,25 @@
   function kMsg(fmt, scenario){ return `${CONFIG.CACHE_KEY_PREFIX||'wpsecure_sig_'}${userFrag()}_${sessionId()}_message_${fmt}_${scenario}`; }
   function kApt(fmt){ return `${CONFIG.CACHE_KEY_PREFIX||'wpsecure_sig_'}${userFrag()}_${sessionId()}_appointment_${fmt}_new`; }
 
-  function paths(kind, fmt, scenario){
-    const p = CONFIG.TEMPLATE_PATHS||{};
-    if(kind==='msg'){
-      return fmt==='HTML' ? (scenario==='reply' ? p.replyHtml : p.newHtml) : (scenario==='reply' ? p.replyText : p.newText);
-    } else { // appointment uses NEW only
-      return fmt==='HTML' ? p.newHtml : p.newText;
-    }
-  }
+  function currentUserEmail() {
+  // Office.js exposes the SMTP address of the mailbox user
+  return Office.context.mailbox.userProfile.emailAddress || '';
+}
+
+function applyPlaceholders(relPath) {
+  return relPath.replace(/{email}/g, currentUserEmail());
+}
+
+function paths(kind, fmt, scenario){
+  const p = CONFIG.TEMPLATE_PATHS || {};
+  let rel =
+    (kind === 'msg')
+      ? (fmt === 'HTML'
+          ? (scenario === 'reply' ? p.replyHtml : p.newHtml)
+          : (scenario === 'reply' ? p.replyText : p.newText))
+      : (fmt === 'HTML' ? p.newHtml : p.newText); // appointments use NEW only
+  return applyPlaceholders(rel || '');
+}
 
   async function fetchTemplate(token, path){
     const url = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURI(path.replace(/^\/+/,''))}:/content`;
