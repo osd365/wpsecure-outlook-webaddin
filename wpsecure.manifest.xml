@@ -44,9 +44,9 @@
                     <ov:Description resid="WPSecure.Button.Tooltip" />
                   </ov:Supertip>
                   <ov:Icon>
-                    <ov:bt:Image size="16" resid="WPSecure.Icon.16" />
-                    <ov:bt:Image size="32" resid="WPSecure.Icon.32" />
-                    <ov:bt:Image size="80" resid="WPSecure.Icon.80" />
+                    <bt:Image size="16" resid="WPSecure.Icon.16" />
+                    <bt:Image size="32" resid="WPSecure.Icon.32" />
+                    <bt:Image size="80" resid="WPSecure.Icon.80" />
                   </ov:Icon>
                   <ov:Action xsi:type="ov:ExecuteFunction">
                     <ov:FunctionName>WPSecure_Reinsert</ov:FunctionName>
@@ -67,9 +67,9 @@
                     <ov:Description resid="WPSecure.Button.Tooltip" />
                   </ov:Supertip>
                   <ov:Icon>
-                    <ov:bt:Image size="16" resid="WPSecure.Icon.16" />
-                    <ov:bt:Image size="32" resid="WPSecure.Icon.32" />
-                    <ov:bt:Image size="80" resid="WPSecure.Icon.80" />
+                    <bt:Image size="16" resid="WPSecure.Icon.16" />
+                    <bt:Image size="32" resid="WPSecure.Icon.32" />
+                    <bt:Image size="80" resid="WPSecure.Icon.80" />
                   </ov:Icon>
                   <ov:Action xsi:type="ov:ExecuteFunction">
                     <ov:FunctionName>WPSecure_Reinsert</ov:FunctionName>
@@ -91,16 +91,16 @@
     </ov:Hosts>
 
     <ov:Resources>
-      <ov:bt:Images>
-        <ov:bt:Image id="WPSecure.Icon.16" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-16.png" />
-        <ov:bt:Image id="WPSecure.Icon.32" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-32.png" />
-        <ov:bt:Image id="WPSecure.Icon.80" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-80.png" />
-      </ov:bt:Images>
-      <ov:bt:Urls>
-        <ov:bt:Url id="WPSecure.Function.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.html" />
-        <ov:bt:Url id="WPSecure.Runtime.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.html" />
-        <ov:bt:Url id="WPSecure.Script.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.js" />
-      </ov:bt:Urls>
+      <bt:Images>
+        <bt:Image id="WPSecure.Icon.16" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-16.png" />
+        <bt:Image id="WPSecure.Icon.32" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-32.png" />
+        <bt:Image id="WPSecure.Icon.80" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-80.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="WPSecure.Function.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.html" />
+        <bt:Url id="WPSecure.Runtime.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.html" />
+        <bt:Url id="WPSecure.Script.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.js" />
+      </bt:Urls>
       <ov:Strings>
         <ov:String id="WPSecure.Group.Label" DefaultValue="WPSecure" />
         <ov:String id="WPSecure.Button.Label" DefaultValue="WPSecure" />
