@@ -1,40 +1,61 @@
-/* WPSecure (no task pane): single JS file (NAA + Graph + strict format + retries) */
+/* WPSecure (command-only) with external config.json */
 (function(){
-  const LOG_KEY = 'wpsecure_log_level';
-  const DEFAULT_LOG_LEVEL = (localStorage.getItem(LOG_KEY) || 'info').toLowerCase();
-  const levels = ['off','error','warn','info','debug'];
-  function log(level, msg, meta){
-    const idx = levels.indexOf(DEFAULT_LOG_LEVEL);
-    const lid = levels.indexOf(level);
-    if(idx === -1 || lid === -1 || lid>idx || DEFAULT_LOG_LEVEL==='off') return;
-    const prefix = `[WPSecure][${level}]`;
-    if(level==='error') console.error(prefix, msg, meta||'');
-    else if(level==='warn') console.warn(prefix, msg, meta||'');
-    else if(level==='debug') console.debug(prefix, msg, meta||'');
-    else console.log(prefix, msg, meta||'');
+  // ---------------- Logging ----------------
+  const LEVELS = ['off','error','warn','info','debug'];
+  function mkLogger(defaultLevel){
+    const lvl = (localStorage.getItem('wpsecure_log_level') || defaultLevel || 'info').toLowerCase();
+    const idx = LEVELS.indexOf(lvl);
+    return function log(level,msg,meta){
+      const lid = LEVELS.indexOf(level);
+      if(lvl==='off' || lid<0 || idx<0 || lid>idx) return;
+      const p = `[WPSecure][${level}]`;
+      if(level==='error') console.error(p,msg,meta||'');
+      else if(level==='warn') console.warn(p,msg,meta||'');
+      else if(level==='debug') console.debug(p,msg,meta||'');
+      else console.log(p,msg,meta||'');
+    }
   }
 
-  // ---- NAA / MSAL config (fill these after registering your SPA) ----
-  const MSAL_CLIENT_ID = 'YOUR-CLIENT-ID';
-  const MSAL_TENANT_ID = 'common'; // or your tenant GUID
-  const ORIGIN_HOST = location.host; // used for the NAA redirect
-  const GRAPH_SCOPES = ['Files.Read'];
+  // --------------- External config loader ---------------
+  let CONFIG = null;
+  async function loadConfig(){
+    try{
+      const r = await fetch('./config.json', { cache: 'no-store' });
+      if(!r.ok) throw new Error(`config ${r.status}`);
+      CONFIG = await r.json();
+    }catch(e){
+      console.error('[WPSecure] Failed to load config.json', e);
+      CONFIG = { MSAL_CLIENT_ID:'unset', MSAL_TENANT_ID:'common', GRAPH_SCOPES:['Files.Read'], DEFAULT_LOG_LEVEL:'info',
+        TEMPLATE_PATHS:{ newHtml:'/.wpsecure/wpsecure_cloud_new.htm', replyHtml:'/.wpsecure/wpsecure_cloud_reply.htm', newText:'/.wpsecure/wpsecure_cloud_new.txt', replyText:'/.wpsecure/wpsecure_cloud_reply.txt' },
+        STRICT_FORMAT:true, RETRY_CAP_EVENT:10, RETRY_CAP_BUTTON:10, ENABLE_APPOINTMENTS:true,
+        TOASTS:{ success:'WPSecure: Signature inserted.', missingHtml:"WPSecure: HTML signature for this scenario isn’t available.", missingText:"WPSecure: Plain-text signature for this scenario isn’t available.", tenTries:'WPSecure: Tried 10 times. Please refresh Outlook or restart your session, then try again.', systemError:'WPSecure: Couldn’t insert signature due to a system error. Please try again.'},
+        CACHE_KEY_PREFIX:'wpsecure_sig_', COUNTER_KEY_PREFIX:'wpsecure_retry_', SESSION_SCOPED:true
+      };
+    }
+  }
 
-  const msalConfig = {
-    auth: {
-      clientId: MSAL_CLIENT_ID,
-      authority: `https://login.microsoftonline.com/${MSAL_TENANT_ID}`,
-      // Important: origin only (no paths) e.g., brk-multihub://wpsecure.blob.core.windows.net
-      redirectUri: `brk-multihub://${ORIGIN_HOST}`
-    },
-    system: {
-      loggerOptions: { loggerCallback: (_level, message)=>{ if(DEFAULT_LOG_LEVEL==='debug') console.debug('[MSAL]', message); } }
-    },
-    cache: { cacheLocation: 'sessionStorage' }
-  };
+  // Will be initialized after config is loaded
+  let log = ()=>{};
 
-  const msalApp = new msal.PublicClientApplication(msalConfig);
-  let account = null;
+  // --------------- MSAL (NAA) ---------------
+  function redirectOrigin(){
+    if(CONFIG && CONFIG.REDIRECT_ORIGIN) return CONFIG.REDIRECT_ORIGIN; // full origin host if provided
+    return location.host; // origin-only host for brk-multihub
+  }
+
+  let msalApp = null, account = null;
+  async function initMsal(){
+    const msalConfig = {
+      auth: {
+        clientId: CONFIG.MSAL_CLIENT_ID,
+        authority: `https://login.microsoftonline.com/${CONFIG.MSAL_TENANT_ID || 'common'}`,
+        redirectUri: `brk-multihub://${redirectOrigin()}`
+      },
+      system: { loggerOptions: { loggerCallback: (_l,m)=>{ if(localStorage.getItem('wpsecure_log_level')==='debug') console.debug('[MSAL]',m); } } },
+      cache: { cacheLocation: 'sessionStorage' }
+    };
+    msalApp = new msal.PublicClientApplication(msalConfig);
+  }
 
   async function getAccessToken({interactive}){
     try{
@@ -42,12 +63,12 @@
       if(accts.length>0) account = accts[0];
       if(!account && !interactive) return null;
       if(!account && interactive){
-        const loginResp = await msalApp.loginPopup({ scopes: GRAPH_SCOPES });
+        const loginResp = await msalApp.loginPopup({ scopes: CONFIG.GRAPH_SCOPES||['Files.Read'] });
         account = loginResp.account;
       }
       if(!account) return null;
-      const result = await msalApp.acquireTokenSilent({ account, scopes: GRAPH_SCOPES }).catch(async (e)=>{
-        if(interactive) return msalApp.acquireTokenPopup({ account, scopes: GRAPH_SCOPES });
+      const result = await msalApp.acquireTokenSilent({ account, scopes: CONFIG.GRAPH_SCOPES||['Files.Read'] }).catch(async (e)=>{
+        if(interactive) return msalApp.acquireTokenPopup({ account, scopes: CONFIG.GRAPH_SCOPES||['Files.Read'] });
         throw e;
       });
       return result && result.accessToken || null;
@@ -63,56 +84,53 @@
     }catch{ return 'user'; }
   }
 
-  function counterKey(kind){ return `wpsecure_retry_${kind}_${userFrag()}_${Office.context.sessionId}`; }
-  function getCounter(kind){ return parseInt(localStorage.getItem(counterKey(kind))||'0')||0; }
-  function incCounter(kind){ const k = counterKey(kind); const v = getCounter(kind)+1; localStorage.setItem(k, String(v)); return v; }
-  function capReached(kind){ return getCounter(kind) >= 10; }
+  // --------------- Counters & cache ---------------
+  function sessionId(){ return (CONFIG.SESSION_SCOPED!==false && Office && Office.context && Office.context.sessionId) ? Office.context.sessionId : 'global'; }
+  function cKey(kind){ return `${CONFIG.COUNTER_KEY_PREFIX||'wpsecure_retry_'}${kind}_${userFrag()}_${sessionId()}`; }
+  function getCounter(kind){ return parseInt(localStorage.getItem(cKey(kind))||'0')||0; }
+  function incCounter(kind){ const k=cKey(kind); const v=getCounter(kind)+1; localStorage.setItem(k,String(v)); return v; }
+  function capReached(kind){ const cap = kind==='button'? (CONFIG.RETRY_CAP_BUTTON||10) : (CONFIG.RETRY_CAP_EVENT||10); return getCounter(kind) >= cap; }
 
-  function keyMsg(fmt, scenario){ return `wpsecure_sig_${userFrag()}_${Office.context.sessionId}_message_${fmt}_${scenario}`; }
-  function keyApt(fmt){ return `wpsecure_sig_${userFrag()}_${Office.context.sessionId}_appointment_${fmt}_new`; }
+  function kMsg(fmt, scenario){ return `${CONFIG.CACHE_KEY_PREFIX||'wpsecure_sig_'}${userFrag()}_${sessionId()}_message_${fmt}_${scenario}`; }
+  function kApt(fmt){ return `${CONFIG.CACHE_KEY_PREFIX||'wpsecure_sig_'}${userFrag()}_${sessionId()}_appointment_${fmt}_new`; }
 
-  const PATHS = {
-    msg: {
-      HTML: { new: '/me/drive/root:/\\.wpsecure/wpsecure_cloud_new.htm:/content', reply: '/me/drive/root:/\\.wpsecure/wpsecure_cloud_reply.htm:/content' },
-      txt:  { new: '/me/drive/root:/\\.wpsecure/wpsecure_cloud_new.txt:/content', reply: '/me/drive/root:/\\.wpsecure/wpsecure_cloud_reply.txt:/content' }
-    },
-    apt: {
-      HTML: { new: '/me/drive/root:/\\.wpsecure/wpsecure_cloud_new.htm:/content' },
-      txt:  { new: '/me/drive/root:/\\.wpsecure/wpsecure_cloud_new.txt:/content' }
+  function paths(kind, fmt, scenario){
+    const p = CONFIG.TEMPLATE_PATHS||{};
+    if(kind==='msg'){
+      return fmt==='HTML' ? (scenario==='reply' ? p.replyHtml : p.newHtml) : (scenario==='reply' ? p.replyText : p.newText);
+    } else { // appointment uses NEW only
+      return fmt==='HTML' ? p.newHtml : p.newText;
     }
-  };
+  }
 
-  async function fetchTemplate(graphToken, url){
-    const r = await fetch(`https://graph.microsoft.com/v1.0${url}`, { headers: { Authorization: `Bearer ${graphToken}` }});
+  async function fetchTemplate(token, path){
+    const url = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURI(path.replace(/^\/+/,''))}:/content`;
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` }});
     if(!r.ok) throw new Error(`graph ${r.status}`);
     return await r.text();
   }
 
-  function cacheSet(k,v){ try{ localStorage.setItem(k, v); }catch(e){ log('warn','cache:set failed',{k}); } }
+  function cacheSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){ log('warn','cache:set failed',{k}); } }
   function cacheGet(k){ try{ return localStorage.getItem(k); }catch{ return null; } }
 
   async function ensureCached(kind, fmt, scenario, isInteractive){
-    const key = kind==='msg' ? keyMsg(fmt, scenario) : keyApt(fmt);
+    const key = (kind==='msg') ? kMsg(fmt,scenario) : kApt(fmt);
     if(cacheGet(key)) { log('info','cache:hit',{key}); return true; }
 
     const counterKind = isInteractive ? 'button' : 'event';
     if(capReached(counterKind)) { log('info','retry cap reached',{counterKind}); return false; }
 
-    const token = await getAccessToken({interactive: isInteractive});
+    const token = await getAccessToken({interactive:isInteractive});
     if(!token){ incCounter(counterKind); log('info','token unavailable; abort fetch',{counterKind}); return false; }
 
-    const path = kind==='msg' ? PATHS.msg[fmt][scenario] : PATHS.apt[fmt].new;
-    log('info','graph:fetch start',{path});
+    const relPath = paths(kind, fmt, scenario);
+    log('info','graph:fetch start',{relPath});
     try{
-      const text = await fetchTemplate(token, path);
+      const text = await fetchTemplate(token, relPath);
       cacheSet(key, text);
       log('info','graph:fetch ok',{key});
       return true;
-    }catch(e){
-      incCounter(counterKind);
-      log('info','graph:fetch failed',{message:e.message, path});
-      return false;
-    }
+    }catch(e){ incCounter(counterKind); log('info','graph:fetch failed',{message:e.message, relPath}); return false; }
   }
 
   function getBodyFormat(){
@@ -164,11 +182,14 @@
     const scenario = itemType==='message' ? await getComposeScenario() : 'new';
     log('info','compose context',{itemType, fmt, scenario});
 
+    // Strict policy: require matching format
+    if(CONFIG.STRICT_FORMAT!==false){ /* always strict */ }
+
     const kind = itemType==='message' ? 'msg' : 'apt';
     const ok = await ensureCached(kind, fmt, scenario, interactive);
     if(!ok) return { inserted:false, reason:'missing' };
 
-    const key = itemType==='message' ? keyMsg(fmt, scenario) : keyApt(fmt);
+    const key = (kind==='msg') ? kMsg(fmt, scenario) : kApt(fmt);
     const payload = cacheGet(key);
     if(!payload) return { inserted:false, reason:'missing' };
 
@@ -180,7 +201,7 @@
     try{
       const id='wpsecure-toast';
       Office.context.mailbox.item.notificationMessages.replaceAsync(id,{type:kind,message,icon:'icon-16',persistent:false});
-    }catch(e){ /* no-op */ }
+    }catch(e){ /* ignore */ }
   }
 
   async function onMessageCompose(event){
@@ -196,21 +217,29 @@
     try{
       await Office.onReady();
       const itemType = Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message ? 'message' : 'appointment';
+      if(itemType==='appointment' && CONFIG.ENABLE_APPOINTMENTS===false){ toast('errorMessage','WPSecure: Appointments disabled.'); event.completed&&event.completed(); return; }
       const res = await doInsert({ interactive:true, itemType });
-      if(res.inserted){ toast('informationalMessage','WPSecure: Signature inserted.'); }
+      if(res.inserted){ toast('informationalMessage', CONFIG.TOASTS && CONFIG.TOASTS.success || 'WPSecure: Signature inserted.'); }
       else if(res.reason==='missing'){
         const fmt = await getBodyFormat();
         const label = fmt==='HTML' ? 'HTML' : 'Plain-text';
-        const capped = capReached('button') || getCounter('button')>=10;
-        if(capped) toast('errorMessage','WPSecure: Tried 10 times. Please refresh Outlook or restart your session, then try again.');
-        else toast('errorMessage',`WPSecure: ${label} signature for this scenario isn’t available.`);
+        const capped = (getCounter('button') >= (CONFIG.RETRY_CAP_BUTTON||10));
+        if(capped) toast('errorMessage', (CONFIG.TOASTS && CONFIG.TOASTS.tenTries) || 'WPSecure: Tried 10 times. Please refresh Outlook or restart your session, then try again.');
+        else toast('errorMessage', (fmt==='HTML' ? (CONFIG.TOASTS && CONFIG.TOASTS.missingHtml) : (CONFIG.TOASTS && CONFIG.TOASTS.missingText)) || 'Signature not available.');
       } else {
-        toast('errorMessage','WPSecure: Couldn’t insert signature due to a system error. Please try again.');
+        toast('errorMessage', (CONFIG.TOASTS && CONFIG.TOASTS.systemError) || 'WPSecure: Couldn’t insert signature due to a system error.');
       }
-    }catch(e){ toast('errorMessage','WPSecure: Unexpected error.'); log('error','onReinsert error',{message:e.message}); }
+    }catch(e){ toast('errorMessage', (CONFIG.TOASTS && CONFIG.TOASTS.systemError) || 'WPSecure: Unexpected error.'); log('error','onReinsert error',{message:e.message}); }
     finally { event.completed && event.completed(); }
   }
 
-  Office.actions.associate('WPSecure_OnMessageCompose', onMessageCompose);
-  Office.actions.associate('WPSecure_Reinsert', onReinsert);
+  // Bootstrap: load config → init logger → init MSAL → wire handlers
+  (async function bootstrap(){
+    await loadConfig();
+    log = mkLogger(CONFIG.DEFAULT_LOG_LEVEL||'info');
+    await initMsal();
+    Office.actions.associate('WPSecure_OnMessageCompose', onMessageCompose);
+    Office.actions.associate('WPSecure_Reinsert', onReinsert);
+  })();
+
 })();

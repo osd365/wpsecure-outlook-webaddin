@@ -7,12 +7,12 @@
   <Id>00000000-0000-0000-0000-000000000000</Id>
   <Version>1.0.0.0</Version>
   <ProviderName>WPSecure</ProviderName>
-  <DefaultLocale>EN-US</DefaultLocale>
+  <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="WPSecure" />
   <Description DefaultValue="WPSecure inserts organization‑approved signatures from the user's OneDrive /.wpsecure folder."/>
 
-  <IconUrl DefaultValue="https://wpsecure.blob.core.windows.net/$web/assets/icon-32.png" />
-  <HighResolutionIconUrl DefaultValue="https://wpsecure.blob.core.windows.net/$web/assets/icon-80.png" />
+  <IconUrl DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-80.png" />
 
   <Requirements>
     <Sets DefaultMinVersion="1.10">
@@ -30,7 +30,7 @@
     <ov:Hosts>
       <ov:Host xsi:type="ov:MailHost">
         <ov:DesktopFormFactor>
-          <!-- No task pane. Keep a FunctionFile for command runtime hosting. -->
+          <!-- No task pane. FunctionFile hosts the shared runtime. -->
           <ov:FunctionFile resid="WPSecure.Function.Url"/>
 
           <ov:ExtensionPoint xsi:type="ov:MessageComposeCommandSurface">
@@ -92,14 +92,14 @@
 
     <ov:Resources>
       <ov:bt:Images>
-        <ov:bt:Image id="WPSecure.Icon.16" DefaultValue="https://wpsecure.blob.core.windows.net/$web/assets/icon-16.png" />
-        <ov:bt:Image id="WPSecure.Icon.32" DefaultValue="https://wpsecure.blob.core.windows.net/$web/assets/icon-32.png" />
-        <ov:bt:Image id="WPSecure.Icon.80" DefaultValue="https://wpsecure.blob.core.windows.net/$web/assets/icon-80.png" />
+        <ov:bt:Image id="WPSecure.Icon.16" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-16.png" />
+        <ov:bt:Image id="WPSecure.Icon.32" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-32.png" />
+        <ov:bt:Image id="WPSecure.Icon.80" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-80.png" />
       </ov:bt:Images>
       <ov:bt:Urls>
-        <ov:bt:Url id="WPSecure.Function.Url" DefaultValue="https://wpsecure.blob.core.windows.net/$web/wpsecure.html" />
-        <ov:bt:Url id="WPSecure.Runtime.Url" DefaultValue="https://wpsecure.blob.core.windows.net/$web/wpsecure.html" />
-        <ov:bt:Url id="WPSecure.Script.Url" DefaultValue="https://wpsecure.blob.core.windows.net/$web/wpsecure.js" />
+        <ov:bt:Url id="WPSecure.Function.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.html" />
+        <ov:bt:Url id="WPSecure.Runtime.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.html" />
+        <ov:bt:Url id="WPSecure.Script.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.js" />
       </ov:bt:Urls>
       <ov:Strings>
         <ov:String id="WPSecure.Group.Label" DefaultValue="WPSecure" />
@@ -108,7 +108,6 @@
       </ov:Strings>
     </ov:Resources>
 
-    <!-- Shared runtime for events + execute functions (no visible pane). -->
     <ov:Runtimes>
       <ov:Runtime resid="WPSecure.Runtime.Url">
         <ov:Override type="javascript" resid="WPSecure.Script.Url" />

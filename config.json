@@ -1,0 +1,29 @@
+{
+  "MSAL_CLIENT_ID": "YOUR-CLIENT-ID",
+  "MSAL_TENANT_ID": "common",
+  "GRAPH_SCOPES": [
+    "Files.Read"
+  ],
+  "REDIRECT_ORIGIN": "",
+  "TEMPLATE_PATHS": {
+    "newHtml": "/.wpsecure/wpsecure_cloud_new.htm",
+    "replyHtml": "/.wpsecure/wpsecure_cloud_reply.htm",
+    "newText": "/.wpsecure/wpsecure_cloud_new.txt",
+    "replyText": "/.wpsecure/wpsecure_cloud_reply.txt"
+  },
+  "STRICT_FORMAT": true,
+  "RETRY_CAP_EVENT": 10,
+  "RETRY_CAP_BUTTON": 10,
+  "ENABLE_APPOINTMENTS": true,
+  "DEFAULT_LOG_LEVEL": "info",
+  "TOASTS": {
+    "success": "WPSecure: Signature inserted.",
+    "missingHtml": "WPSecure: HTML signature for this scenario isn\u2019t available.",
+    "missingText": "WPSecure: Plain-text signature for this scenario isn\u2019t available.",
+    "tenTries": "WPSecure: Tried 10 times. Please refresh Outlook or restart your session, then try again.",
+    "systemError": "WPSecure: Couldn\u2019t insert signature due to a system error. Please try again."
+  },
+  "CACHE_KEY_PREFIX": "wpsecure_sig_",
+  "COUNTER_KEY_PREFIX": "wpsecure_retry_",
+  "SESSION_SCOPED": true
+}
