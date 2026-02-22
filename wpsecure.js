@@ -20,10 +20,10 @@
     SESSION_SCOPED: true,
     // With {email} placeholder
     TEMPLATE_PATHS: {
-      newHtml:  '/.wpsecure/wpsecure_cloud_new ({email}).htm',
-      replyHtml:'/.wpsecure/wpsecure_cloud_reply ({email}).htm',
-      newText:  '/.wpsecure/wpsecure_cloud_new ({email}).txt',
-      replyText:'/.wpsecure/wpsecure_cloud_reply ({email}).txt'
+      newHtml:  '/.wpsecure-cloud-signature-sync-DO-NOT-USE-THIS-FOLDER/wpsecure_cloud_new ({email}).htm',
+      replyHtml:'/.wpsecure-cloud-signature-sync-DO-NOT-USE-THIS-FOLDER/wpsecure_cloud_reply ({email}).htm',
+      newText:  '/.wpsecure-cloud-signature-sync-DO-NOT-USE-THIS-FOLDER/wpsecure_cloud_new ({email}).txt',
+      replyText:'/.wpsecure-cloud-signature-sync-DO-NOT-USE-THIS-FOLDER/wpsecure_cloud_reply ({email}).txt'
     },
     // Optional fallback (prefer CONFIG.REDIRECT_ORIGIN)
     REDIRECT_ORIGIN: ''

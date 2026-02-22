@@ -5,7 +5,7 @@
            xmlns:ov="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
            xsi:type="MailApp">
   <Id>00000000-0000-0000-0000-000000000000</Id>
-  <Version>1.0.0.0</Version>
+  <Version>70.14.3.2</Version>
   <ProviderName>WPSecure</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="WPSecure" />
