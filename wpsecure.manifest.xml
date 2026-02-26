@@ -11,8 +11,8 @@
   <DisplayName DefaultValue="WPSecure" />
   <Description DefaultValue="WPSecure inserts organization‑approved signatures from the user's OneDrive /.wpsecure folder."/>
 
-  <IconUrl DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-32.png" />
-  <HighResolutionIconUrl DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-80.png" />
+  <IconUrl DefaultValue="https://wpsecure.z20.web.core.windows.net/assets/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://wpsecure.z20.web.core.windows.net/assets/icon-80.png" />
 
   <Requirements>
     <Sets DefaultMinVersion="1.10">
@@ -92,14 +92,14 @@
 
     <ov:Resources>
       <bt:Images>
-        <bt:Image id="WPSecure.Icon.16" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-16.png" />
-        <bt:Image id="WPSecure.Icon.32" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-32.png" />
-        <bt:Image id="WPSecure.Icon.80" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/assets/icon-80.png" />
+        <bt:Image id="WPSecure.Icon.16" DefaultValue="https://wpsecure.z20.web.core.windows.net/assets/icon-16.png" />
+        <bt:Image id="WPSecure.Icon.32" DefaultValue="https://wpsecure.z20.web.core.windows.net/assets/icon-32.png" />
+        <bt:Image id="WPSecure.Icon.80" DefaultValue="https://wpsecure.z20.web.core.windows.net/assets/icon-80.png" />
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="WPSecure.Function.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.html" />
-        <bt:Url id="WPSecure.Runtime.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.html" />
-        <bt:Url id="WPSecure.Script.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/$web/wpsecure.js" />
+        <bt:Url id="WPSecure.Function.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/wpsecure.html" />
+        <bt:Url id="WPSecure.Runtime.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/wpsecure.html" />
+        <bt:Url id="WPSecure.Script.Url" DefaultValue="https://wpsecure.z20.web.core.windows.net/wpsecure.js" />
       </bt:Urls>
       <ov:Strings>
         <ov:String id="WPSecure.Group.Label" DefaultValue="WPSecure" />
