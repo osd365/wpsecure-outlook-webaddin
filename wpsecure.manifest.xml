@@ -24,7 +24,7 @@
     <Form xsi:type="ItemRead">
       <DesktopSettings>
         <SourceLocation DefaultValue="https://wpsecure.z20.web.core.windows.net/wpsecure.html"/>
-        <RequestedHeight>250</RequestedHeight>
+        <RequestedHeight>40</RequestedHeight>
       </DesktopSettings>
     </Form>
   </FormSettings>
