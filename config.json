@@ -1,5 +1,5 @@
 {
   "MSAL_CLIENT_ID": "aec4319a-ec9b-4e5e-9f72-1fdcc30c9a63",
   "MSAL_TENANT_ID": "9fa4d4d6-7541-490f-a49a-001d3392731f",
-  "REDIRECT_ORIGIN": "wpsecure.blob.core.windows.net"
+  "REDIRECT_ORIGIN": "wpsecure.z20.web.core.windows.net"
 }
