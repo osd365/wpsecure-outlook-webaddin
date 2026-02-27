@@ -109,7 +109,7 @@
           <bt:Url id="Commands.Url" DefaultValue="https://black-field-048d72b0f.6.azurestaticapps.net/wpsecure.html"/>
         </bt:Urls>
         <bt:ShortStrings>
-          <bt:String id="GroupLabel" DefaultValue="WPSecure"/>
+          <bt:String id="GroupLabel" DefaultValue="Insert Signature"/>
           <bt:String id="ActionButton.Label" DefaultValue="Insert Signature"/>
         </bt:ShortStrings>
         <bt:LongStrings>
