@@ -1,0 +1,3 @@
+{
+  "BACKEND_OBO_ENDPOINT": "https://<your-server>/token/obo"
+}
