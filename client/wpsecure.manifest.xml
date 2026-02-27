@@ -117,12 +117,11 @@
         </bt:LongStrings>
       </Resources>
       <WebApplicationInfo>
-        <Id>aec4319a-ec9b-4e5e-9f72-1fdcc30c9a63</Id>
-        <Resource>api://aec4319a-ec9b-4e5e-9f72-1fdcc30c9a63</Resource>
+        <Id>02821fdc-e607-41e1-abc3-46e1208349c6</Id>
+        <Resource>api://02821fdc-e607-41e1-abc3-46e1208349c6</Resource>
         <Scopes>
           <Scope>openid</Scope>
           <Scope>profile</Scope>
-          <Scope>offline_access</Scope>
         </Scopes>
       </WebApplicationInfo>
     </VersionOverrides>
