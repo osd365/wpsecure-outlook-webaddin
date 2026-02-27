@@ -105,7 +105,7 @@
           <bt:Image id="Icon.80x80" DefaultValue="https://black-field-048d72b0f.6.azurestaticapps.net/assets/icon-80.png"/>
         </bt:Images>
         <bt:Urls>
-          <bt:Url id="JSRuntime.Url" DefaultValue="https://black-field-048d72b0f.6.azurestaticapps.net/wpsecure.js?v=20260227-SSO3"/>
+          <bt:Url id="JSRuntime.Url" DefaultValue="https://black-field-048d72b0f.6.azurestaticapps.net/wpsecure.js"/>
           <bt:Url id="Commands.Url" DefaultValue="https://black-field-048d72b0f.6.azurestaticapps.net/wpsecure.html"/>
         </bt:Urls>
         <bt:ShortStrings>
