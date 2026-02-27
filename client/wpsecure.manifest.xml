@@ -118,7 +118,7 @@
       </Resources>
       <WebApplicationInfo>
         <Id>02821fdc-e607-41e1-abc3-46e1208349c6</Id>
-        <Resource>api://02821fdc-e607-41e1-abc3-46e1208349c6</Resource>
+        <Resource>api://black-field-048d72b0f.6.azurestaticapps.net/02821fdc-e607-41e1-abc3-46e1208349c6</Resource>
         <Scopes>
           <Scope>openid</Scope>
           <Scope>profile</Scope>
