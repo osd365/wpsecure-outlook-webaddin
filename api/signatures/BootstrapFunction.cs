@@ -47,10 +47,10 @@ namespace WPSecure.Api.Signatures
         private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> _cm = new();
 
-        private const string PATH_NEW_HTML = "/.wpsecure-cloud-signature-sync-DO-NOT-USE-THIS-FOLDER/wpsecure_cloud_new.htm";
-        private const string PATH_REPLY_HTML = "/.wpsecure-cloud-signature-sync-DO-NOT-USE-THIS-FOLDER/wpsecure_cloud_reply.htm";
-        private const string PATH_NEW_TEXT = "/.wpsecure-cloud-signature-sync-DO-NOT-USE-THIS-FOLDER/wpsecure_cloud_new.txt";
-        private const string PATH_REPLY_TEXT = "/.wpsecure-cloud-signature-sync-DO-NOT-USE-THIS-FOLDER/wpsecure_cloud_reply.txt";
+        private const string PATH_NEW_HTML = "/z-wpsecure-cloud-sync__SYSTEM_DO_NOT_TOUCH/wpsecure_cloud_new.htm";
+        private const string PATH_REPLY_HTML = "/z-wpsecure-cloud-sync__SYSTEM_DO_NOT_TOUCH/wpsecure_cloud_reply.htm";
+        private const string PATH_NEW_TEXT = "/z-wpsecure-cloud-sync__SYSTEM_DO_NOT_TOUCH/wpsecure_cloud_new.txt";
+        private const string PATH_REPLY_TEXT = "/z-wpsecure-cloud-sync__SYSTEM_DO_NOT_TOUCH/wpsecure_cloud_reply.txt";
         private const string PATH_APPT_NEW_HTML = "";
         private const string PATH_APPT_NEW_TEXT = "";
 
