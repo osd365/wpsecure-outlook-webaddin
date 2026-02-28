@@ -1,3 +1,4 @@
 {
-  "BACKEND_OBO_ENDPOINT": "https://black-field-048d72b0f.6.azurestaticapps.net/token/obo"
+  "BACKEND_OBO_ENDPOINT": "/api/token/obo",
+  "BACKEND_BOOTSTRAP_ENDPOINT": "/api/signatures/bootstrap"
 }

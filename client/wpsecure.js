@@ -1,9 +1,9 @@
 /* WPSecure Outlook Add-in Runtime — SSO+OBO Silent Cache Edition
- * Build: 2026-02-27T035704Z
+ * Build: 2026-02-27T035704Z (patched for SWA /api routing)
  * Policy:
- *  - Silent UX (no toasts). Console logs only (no PII, no tokens).
- *  - Cache-only insertion on button/event; do nothing if cache miss.
- *  - Bootstrap once per session: fetch up to 4 templates via backend (OBO), cache non-null.
+ * - Silent UX (no toasts). Console logs only (no PII, no tokens).
+ * - Cache-only insertion on button/event; do nothing if cache miss.
+ * - Bootstrap once per session: fetch up to 4 templates via backend (OBO), cache non-null.
  */
 (function(){
   // ---------------- Logger ----------------
@@ -36,26 +36,23 @@
       }
     }catch(e){ /* keep defaults */ }
   }
-
   function computeBootstrapUrl(){
+    // Prefer explicit bootstrap endpoint from config
     if(CONFIG.BACKEND_BOOTSTRAP_ENDPOINT) return CONFIG.BACKEND_BOOTSTRAP_ENDPOINT;
     try{
-      if(!CONFIG.BACKEND_OBO_ENDPOINT) return '';
+      // If an OBO endpoint was provided, derive /api/signatures/bootstrap on same origin
+      if(!CONFIG.BACKEND_OBO_ENDPOINT) return '/api/signatures/bootstrap';
       const u = new URL(CONFIG.BACKEND_OBO_ENDPOINT, location.origin);
-      // If OBO endpoint ends with /token/obo, replace with /signatures/bootstrap
-      if(u.pathname.endsWith('/token/obo')){
-        u.pathname = u.pathname.replace(/\/token\/obo$/, '/signatures/bootstrap');
-        return u.toString();
-      }
-      // Otherwise, try sibling path under same base
-      u.pathname = (u.pathname.replace(/\/$/, '')) + '/signatures/bootstrap';
-      return u.toString();
-    }catch(_){ return ''; }
+      // Force the path to SWA Functions API route
+      u.pathname = '/api/signatures/bootstrap';
+      // Return a relative path (safer across environments)
+      return u.pathname;
+    }catch(_){ return '/api/signatures/bootstrap'; }
   }
 
   // ---------------- Helpers ----------------
   let log = ()=>{};
-  function sessionId(){ try{ return Office && Office.context && Office.context.sessionId || 'global'; }catch{ return 'global'; } }
+  function sessionId(){ try{ return (Office && Office.context && Office.context.sessionId) || 'global'; }catch{ return 'global'; } }
   function userFrag(){ try{ const up=Office.context.mailbox.userProfile; return (up && up.emailAddress || 'user').replace(/[^a-z0-9]/gi,'').slice(0,10) || 'user'; }catch{ return 'user'; } }
   function makeKey(kind, fmt, scenario){ // kind: 'message' | 'appointment'; fmt: 'HTML'|'txt'; scenario: 'new'|'reply'
     const u = userFrag(); const s = sessionId();
@@ -64,7 +61,6 @@
   }
   function cacheSet(k,v){ try{ localStorage.setItem(k,v); }catch(_){ /* ignore */ } }
   function cacheGet(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }
-
   function getBodyFormat(){
     return new Promise(resolve=>{
       try{
@@ -84,12 +80,11 @@
         fn(ar=>{
           if(ar.status!==Office.AsyncResultStatus.Succeeded) return resolve('new');
           const ct = ar.value && ar.value.composeType;
-          resolve(ct==='reply' || ct==='forward' ? 'reply' : 'new');
+          resolve((ct==='reply' || ct==='forward') ? 'reply' : 'new');
         });
       }catch(_){ resolve('new'); }
     });
   }
-
   async function insertSignature(content, fmt){
     return new Promise(resolve=>{
       const opts = { coercionType: fmt==='HTML' ? Office.CoercionType.Html : Office.CoercionType.Text };
@@ -117,7 +112,6 @@
       return await Office.auth.getAccessToken({ allowSignInPrompt:false, allowConsentPrompt:false });
     }catch(_){ return null; }
   }
-
   async function bootstrapSignaturesSilently(){
     try{
       log('info','bootstrap:start');
@@ -134,10 +128,10 @@
       const payload = await res.json();
       const files = (payload && payload.files) || {};
       // Cache only non-null values
-      if(files.newHtml)   cacheSet(makeKey('message','HTML','new'),   files.newHtml);
-      if(files.replyHtml) cacheSet(makeKey('message','HTML','reply'), files.replyHtml);
-      if(files.newText)   cacheSet(makeKey('message','txt','new'),    files.newText);
-      if(files.replyText) cacheSet(makeKey('message','txt','reply'),  files.replyText);
+      if(files.newHtml)  cacheSet(makeKey('message','HTML','new'),   files.newHtml);
+      if(files.replyHtml)cacheSet(makeKey('message','HTML','reply'), files.replyHtml);
+      if(files.newText)  cacheSet(makeKey('message','txt','new'),    files.newText);
+      if(files.replyText)cacheSet(makeKey('message','txt','reply'),  files.replyText);
       // Optional appointments if backend returns
       if(files.apptNewHtml) cacheSet(makeKey('appointment','HTML','new'), files.apptNewHtml);
       if(files.apptNewText) cacheSet(makeKey('appointment','txt','new'),  files.apptNewText);
@@ -157,7 +151,6 @@
     const fmt = await getBodyFormat();
     const scenario = itemType==='message' ? await getComposeScenario() : 'new';
     log('info','insert:scenario', { item:itemType, fmt, compose:scenario });
-
     const key = makeKey(itemType, fmt, scenario);
     const payload = cacheGet(key);
     if(!payload){ log('warn','insert:cache-miss', { key }); return false; }
