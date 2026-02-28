@@ -47,10 +47,12 @@ namespace WPSecure.Api.Signatures
         private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> _cm = new();
 
-        private const string PATH_NEW_HTML = "/z-wpsecure-cloud-sync__SYSTEM_DO_NOT_TOUCH/wpsecure_cloud_new.htm";
-        private const string PATH_REPLY_HTML = "/z-wpsecure-cloud-sync__SYSTEM_DO_NOT_TOUCH/wpsecure_cloud_reply.htm";
-        private const string PATH_NEW_TEXT = "/z-wpsecure-cloud-sync__SYSTEM_DO_NOT_TOUCH/wpsecure_cloud_new.txt";
-        private const string PATH_REPLY_TEXT = "/z-wpsecure-cloud-sync__SYSTEM_DO_NOT_TOUCH/wpsecure_cloud_reply.txt";
+
+        private const string SIGNATURE_ROOT = "/z-wpsecure-cloud-sync__SYSTEM_DO_NOT_TOUCH";
+        private const string PATH_NEW_HTML = SIGNATURE_ROOT + "/wpsecure_cloud_new.htm";
+        private const string PATH_REPLY_HTML = SIGNATURE_ROOT + "/wpsecure_cloud_reply.htm";
+        private const string PATH_NEW_TEXT = SIGNATURE_ROOT + "/wpsecure_cloud_new.txt";
+        private const string PATH_REPLY_TEXT = SIGNATURE_ROOT + "/wpsecure_cloud_reply.txt";
         private const string PATH_APPT_NEW_HTML = "";
         private const string PATH_APPT_NEW_TEXT = "";
 
@@ -79,16 +81,15 @@ namespace WPSecure.Api.Signatures
                     return res;
                 }
 
-                var tenantId = _config["Backend:TenantId"] ?? string.Empty;
-                var backendClientId = _config["Backend:ClientId"] ?? string.Empty;
-                var backendSecret = _config["Backend:ClientSecret"] ?? string.Empty;
-                var authHost = _config["Cloud:AuthorityHost"] ?? "https://login.microsoftonline.com";
-                var graphBase = _config["Graph:BaseUrl"] ?? "https://graph.microsoft.com";
-                var scopes = _config["Graph:Scopes"];
+                var tenantId = _config["BACKEND_TENANTID"] ?? string.Empty;
+                var backendClientId = _config["BACKEND_CLIENTID"] ?? string.Empty;
+                var backendSecret = _config["BACKEND_CLIENTSECRET"] ?? string.Empty;
+                var authHost = _config["CLOUD_AUTHORITYHOST"] ?? "https://login.microsoftonline.com";
+                var graphBase = _config["GRAPH_BASEURL"] ?? "https://graph.microsoft.com";
+                var scopes = _config["GRAPH_SCOPES"];
                 if (string.IsNullOrWhiteSpace(scopes)) scopes = graphBase.TrimEnd('/') + "/.default";
-
-                var expectedAud1 = _config["Frontend:ClientId"];
-                var expectedAud2 = _config["Frontend:AppIdUri"];
+                var expectedAud1 = _config["FRONTEND_CLIENTID"];   // optional
+                var expectedAud2 = _config["FRONTEND_APPIDURI"];   // optional
 
                 if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(backendClientId) || string.IsNullOrWhiteSpace(backendSecret))
                 {
