@@ -31,12 +31,18 @@ namespace WPSecure.Api.Signatures
         [JsonPropertyName("apptNewText")] public string? ApptNewText { get; set; }
     }
 
+    public sealed class BootstrapDebug
+    {
+        [JsonPropertyName("paths")] public Dictionary<string, string>? Paths { get; set; }
+    }
+
     public sealed class BootstrapResult
     {
         [JsonPropertyName("success")] public bool Success { get; set; }
         [JsonPropertyName("error")] public string? Error { get; set; }
         [JsonPropertyName("version")] public string? Version { get; set; }
         [JsonPropertyName("files")] public BootstrapFiles Files { get; set; } = new();
+        [JsonPropertyName("debug")] public BootstrapDebug? Debug { get; set; }   // <— add this
     }
 
     public sealed class BootstrapFunction
@@ -127,7 +133,24 @@ namespace WPSecure.Api.Signatures
                     ApptNewText = await TryReadTextAsync(http, graphBase, PATH_APPT_NEW_TEXT, _logger)
                 };
 
-                var result = new BootstrapResult { Success = true, Version = System.DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"), Files = files };
+                var result = new BootstrapResult
+                {
+                    Success = true,
+                    Version = System.DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"),
+                    Files = files,
+                    Debug = new BootstrapDebug
+                    {
+                        Paths = new Dictionary<string, string>
+        {
+            { "newHtml",   PATH_NEW_HTML },
+            { "replyHtml", PATH_REPLY_HTML },
+            { "newText",   PATH_NEW_TEXT },
+            { "replyText", PATH_REPLY_TEXT },
+            { "apptNewHtml", PATH_APPT_NEW_HTML },
+            { "apptNewText", PATH_APPT_NEW_TEXT }
+        }
+                    }
+                };
                 await res.WriteStringAsync(JsonSerializer.Serialize(result, _json));
                 return res;
             }
