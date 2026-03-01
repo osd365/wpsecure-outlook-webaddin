@@ -99,8 +99,9 @@ namespace WPSecure.Api.Token
                 }
                 catch (MsalServiceException msalEx)
                 {
-                    _logger.LogError(msalEx, "token-obo: obo_failed");
-                    await res.WriteStringAsync(JsonSerializer.Serialize(new OboResult { Success = false, Error = "obo_failed" }, _json));
+                    _logger.LogError(msalEx, "token-obo: obo_failed {Code} {Message}", msalEx.ErrorCode, msalEx.Message);
+                    await res.WriteStringAsync(JsonSerializer.Serialize(
+                        new OboResult { Success = false, Error = $"obo_failed:{msalEx.ErrorCode}" }, _json));
                     return res;
                 }
             }

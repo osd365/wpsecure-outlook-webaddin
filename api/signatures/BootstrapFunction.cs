@@ -166,8 +166,9 @@ namespace WPSecure.Api.Signatures
             }
             catch (MsalServiceException msalEx)
             {
-                _logger.LogError(msalEx, "signatures-bootstrap: obo_failed");
-                await res.WriteStringAsync(JsonSerializer.Serialize(new BootstrapResult { Success = false, Error = "obo_failed" }, _json));
+                _logger.LogError(msalEx, "obo_failed: {Code} {Message}", msalEx.ErrorCode, msalEx.Message);
+                await res.WriteStringAsync(JsonSerializer.Serialize(
+                    new BootstrapResult { Success = false, Error = $"obo_failed:{msalEx.ErrorCode}" }, _json));
                 return res;
             }
             catch (Exception ex)
