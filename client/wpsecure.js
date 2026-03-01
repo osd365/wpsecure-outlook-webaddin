@@ -1,5 +1,5 @@
 /* WPSecure Outlook Add-in Runtime — SSO+OBO Silent Cache Edition
- * Build: 2026-03-01T00:00Z (message HTML unchanged; TEXT no visible markers via sessionData; SAFE appointment HTML)
+ * Build: 2026-03-01T00:00Z (Msg HTML unchanged; TXT: no markers + default-removal guard; Reply TXT prepends; Appt HTML safe merge)
  * Policy:
  * - Silent UX (no toasts). Console logs only (no PII, no tokens).
  * - Cache-only insertion on button/event; do nothing if cache miss.
@@ -128,7 +128,7 @@
     });
   }
 
-  // ---------------- TEXT: sessionData-based replacement (no visible markers) ----------------
+  // sessionData for previous TXT signature
   function getSessionTextSig(){
     return new Promise(resolve => {
       try {
@@ -140,28 +140,35 @@
   }
   function setSessionTextSig(val){
     return new Promise(resolve => {
-      try {
-        Office.context.mailbox.item.sessionData.setAsync('wpsecure_txt_sig', val || '', ar => resolve());
-      } catch(_) { resolve(); }
+      try { Office.context.mailbox.item.sessionData.setAsync('wpsecure_txt_sig', val || '', _ => resolve()); }
+      catch(_) { resolve(); }
     });
   }
 
-  // ---------------- Insertion (message HTML unchanged; TEXT uses sessionData; appointment HTML safe merge) ----------------
-  async function insertSignature(content, fmt){
+  // Compute removed segment by prefix/suffix match
+  function diffRemoved(before, after){
+    const bl = before.length, al = after.length;
+    let p=0; while(p<bl && p<al && before.charCodeAt(p)===after.charCodeAt(p)) p++;
+    let s=0; while(s<bl-p && s<al-p && before.charCodeAt(bl-1-s)===after.charCodeAt(al-1-s)) s++;
+    const removed = before.slice(p, bl - s);
+    return { removed, prefixLen: p };
+  }
+
+  // ---------------- Insertion (msg HTML unchanged; TXT smart; appt HTML safe merge) ----------------
+  async function insertSignature(content, fmt, scenario){
     // Determine item type inline
     const isMessage = (function(){ try{ return Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message; }catch(_){ return true; } })();
     const isAppointment = !isMessage;
 
     if (fmt === 'HTML') {
       if (isAppointment) {
-        // SAFE appointment HTML path: never wipe user content, add spacer, replace our block only
+        // SAFE appointment HTML merge (never wipe, add spacer, replace our block only)
         try {
           const current = await getBodyHtml();
           const wrapperStart = '<div data-wpsecure="sig-appt">';
           const wrapperEnd   = '</div>';
           const wrappedSig   = `${wrapperStart}${content}${wrapperEnd}`;
           let nextHtml;
-
           if (current && current.indexOf(wrapperStart) >= 0) {
             const re = new RegExp(`${wrapperStart}[\\s\\S]*?${wrapperEnd}`,'i');
             nextHtml = current.replace(re, wrappedSig);
@@ -169,20 +176,16 @@
             const spacer = '<div><br></div>';
             nextHtml = (current || '') + spacer + wrappedSig;
           }
-
-          // We are about to insert -> disable client signature first
           try { await disableClientSignature(); } catch(_) {}
           const ok = await setBodyHtml(nextHtml);
           return ok;
         } catch(_) { return false; }
       }
-
-      // HTML Message path (UNCHANGED): replace via setSignatureAsync
+      // Message HTML (unchanged): replace via setSignatureAsync
       return new Promise(resolve => {
         const opts = { coercionType: Office.CoercionType.Html };
         try {
           if (Office.context.mailbox.item.body.setSignatureAsync) {
-            // We are about to insert -> disable client signature first
             disableClientSignature().then(()=>{
               Office.context.mailbox.item.body.setSignatureAsync(content, opts, r => {
                 resolve(r.status === Office.AsyncResultStatus.Succeeded);
@@ -192,28 +195,47 @@
                 resolve(r.status === Office.AsyncResultStatus.Succeeded);
               });
             });
-          } else {
-            resolve(false);
-          }
+          } else { resolve(false); }
         } catch(_) { resolve(false); }
       });
     }
 
-    // TEXT path: emulate REPLACE without visible markers using sessionData
+    // TEXT path (smart):
     try {
-      const current = await getBodyText();
-      const prev = await getSessionTextSig();
-      let baseline = current;
+      // 1) Snapshot BEFORE disable (to detect default + typed text placement)
+      const before = await getBodyText();
 
-      // If the previous WPSecure text signature is known, strip it first (idempotent)
-      if (prev && current && current.indexOf(prev) >= 0) {
-        baseline = current.replace(prev, '');
+      // 2) Disable client signature (if present)
+      try { await disableClientSignature(); } catch(_) {}
+
+      // 3) Snapshot AFTER disable
+      const after = await getBodyText();
+      const { removed, prefixLen } = diffRemoved(before, after);
+      const prefixHasText = /\S/.test(before.slice(0, prefixLen));
+
+      // If user has typed above the client default, DO NOT remove default or insert ours: restore and exit.
+      // (Your requirement: only remove default if there is no text on top.)
+      if (removed && removed.trim().length>0 && prefixHasText) {
+        await setBodyText(before); // restore as user had content above default
+        return false;
       }
 
-      const nextBody = (baseline || '') + (baseline ? "\n\n" : "") + content;
+      // 4) Baseline = AFTER (client default removed if it existed)
+      const prev = await getSessionTextSig();
+      let baseline = after;
+      if (prev && baseline && baseline.indexOf(prev) >= 0) {
+        baseline = baseline.replace(prev, ''); // idempotent removal of prior WPSecure text
+      }
 
-      // We are about to insert -> disable client signature first
-      try { await disableClientSignature(); } catch(_) {}
+      // 5) Build next body based on scenario
+      let nextBody;
+      if (scenario === 'reply') {
+        // Prepend reply signature at the top of compose area
+        nextBody = content + (baseline ? "\n\n" + baseline : '');
+      } else {
+        // New: place at the end (if body had anything else left)
+        nextBody = (baseline ? baseline + "\n\n" : '') + content;
+      }
 
       const ok = await setBodyText(nextBody);
       if (ok) await setSessionTextSig(content);
@@ -274,7 +296,7 @@
     }
 
     if(!payload){ log('warn','insert:cache-miss', { key }); return false; }
-    const ok = await insertSignature(payload, fmt);
+    const ok = await insertSignature(payload, fmt, scenario);
     log('info', ok ? 'insert:done' : 'insert:failed');
     return ok;
   }
@@ -287,9 +309,7 @@
       if(!__eventInsertedOnce){
         __eventInsertedOnce = true;
         await doInsertCurrentContext();
-      } else {
-        log('debug','event:skipped-second-run');
-      }
+      } else { log('debug','event:skipped-second-run'); }
     } catch(_) { }
     finally { try{ event && event.completed && event.completed(); }catch(_){} }
   }
