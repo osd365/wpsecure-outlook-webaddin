@@ -32,18 +32,12 @@ namespace WPSecure.Api.Signatures
         [JsonPropertyName("apptNewText")] public string? ApptNewText { get; set; }
     }
 
-    public sealed class BootstrapDebug
-    {
-        [JsonPropertyName("paths")] public Dictionary<string,string>? Paths { get; set; }
-    }
-
     public sealed class BootstrapResult
     {
         [JsonPropertyName("success")] public bool Success { get; set; }
         [JsonPropertyName("error")]   public string? Error { get; set; }
         [JsonPropertyName("version")] public string? Version { get; set; }
         [JsonPropertyName("files")]   public BootstrapFiles Files { get; set; } = new();
-        [JsonPropertyName("debug")]   public BootstrapDebug? Debug { get; set; }
     }
 
     public sealed class BootstrapFunction
@@ -87,26 +81,26 @@ namespace WPSecure.Api.Signatures
                     return res;
                 }
 
-                // Read config (ALL CAPS, SWA-safe)
-                var tenantId        = _config["BACKEND_TENANTID"]        ?? string.Empty;
-                var backendClientId = _config["BACKEND_CLIENTID"]        ?? string.Empty;
-                var backendSecret   = _config["BACKEND_CLIENTSECRET"]    ?? string.Empty;
-                var authHost        = _config["CLOUD_AUTHORITYHOST"]     ?? "https://login.microsoftonline.com";
-                var graphBase       = _config["GRAPH_BASEURL"]           ?? "https://graph.microsoft.com";
-                var scopes          = _config["GRAPH_SCOPES"];
-                if (string.IsNullOrWhiteSpace(scopes)) scopes = graphBase.TrimEnd('/') + "/.default";
-                var expectedAud1    = _config["FRONTEND_CLIENTID"];   // optional
-                var expectedAud2    = _config["FRONTEND_APPIDURI"];   // optional
+                // Read streamlined env settings
+                var tenantId    = _config["TENANTID"]       ?? string.Empty;
+                var clientId    = _config["CLIENTID"]       ?? string.Empty; // backend app
+                var clientSecret= _config["CLIENTSECRET"]   ?? string.Empty;
+                var authHost    = _config["AUTHORITYHOST"]  ?? "https://login.microsoftonline.com";
+                var graphBase   = _config["GRAPH_BASEURL"]  ?? "https://graph.microsoft.com";
+                var scopes      = _config["GRAPH_SCOPES"]; // may be empty → computed
+                var audUri      = _config["AUDIENCE_APPIDURI"]; // preferred exact audience
 
-                if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(backendClientId) || string.IsNullOrWhiteSpace(backendSecret))
+                if (string.IsNullOrWhiteSpace(scopes)) scopes = graphBase.TrimEnd('/') + "/.default";
+
+                if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
                 {
                     _logger.LogError("signatures-bootstrap: server_misconfigured");
                     await res.WriteStringAsync(JsonSerializer.Serialize(new BootstrapResult { Success = false, Error = "server_misconfigured" }, _json));
                     return res;
                 }
 
-                // Validate token (issuer derived from token itself; supports v1 & v2)
-                var valid = await ValidateUserTokenAsync(body.IdToken.Trim(), expectedAud1, expectedAud2, _logger);
+                // Validate token (issuer from token; audience = AUDIENCE_APPIDURI, GUID fallback to CLIENTID)
+                var valid = await ValidateUserTokenAsync(body.IdToken.Trim(), audUri, clientId, _logger);
                 if (!valid)
                 {
                     await res.WriteStringAsync(JsonSerializer.Serialize(new BootstrapResult { Success = false, Error = "invalid_token" }, _json));
@@ -116,8 +110,8 @@ namespace WPSecure.Api.Signatures
                 // OBO to Graph
                 var authority = authHost.TrimEnd('/') + "/" + tenantId;
                 var cca = ConfidentialClientApplicationBuilder
-                    .Create(backendClientId)
-                    .WithClientSecret(backendSecret)
+                    .Create(clientId)
+                    .WithClientSecret(clientSecret)
                     .WithAuthority(authority)
                     .Build();
 
@@ -140,19 +134,7 @@ namespace WPSecure.Api.Signatures
                 {
                     Success = true,
                     Version = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"),
-                    Files   = files,
-                    Debug   = new BootstrapDebug
-                    {
-                        Paths = new Dictionary<string,string>
-                        {
-                            { "newHtml",     PATH_NEW_HTML },
-                            { "replyHtml",   PATH_REPLY_HTML },
-                            { "newText",     PATH_NEW_TEXT },
-                            { "replyText",   PATH_REPLY_TEXT },
-                            { "apptNewHtml", PATH_APPT_NEW_HTML },
-                            { "apptNewText", PATH_APPT_NEW_TEXT }
-                        }
-                    }
+                    Files   = files
                 };
 
                 await res.WriteStringAsync(JsonSerializer.Serialize(result, _json));
@@ -166,9 +148,8 @@ namespace WPSecure.Api.Signatures
             }
             catch (MsalServiceException msalEx)
             {
-                _logger.LogError(msalEx, "obo_failed: {Code} {Message}", msalEx.ErrorCode, msalEx.Message);
-                await res.WriteStringAsync(JsonSerializer.Serialize(
-                    new BootstrapResult { Success = false, Error = $"obo_failed:{msalEx.ErrorCode}" }, _json));
+                _logger.LogError(msalEx, "signatures-bootstrap: obo_failed {Code} {Message}", msalEx.ErrorCode, msalEx.Message);
+                await res.WriteStringAsync(JsonSerializer.Serialize(new BootstrapResult { Success = false, Error = "obo_failed" }, _json));
                 return res;
             }
             catch (Exception ex)
@@ -197,8 +178,8 @@ namespace WPSecure.Api.Signatures
             }
         }
 
-        // IMPORTANT: Validate against the token's own issuer (supports v1 and v2 tokens)
-        private static async Task<bool> ValidateUserTokenAsync(string rawToken, string? expectedAud1, string? expectedAud2, ILogger logger)
+        // Validate against the token's own issuer (supports v1 and v2) + audience list
+        private static async Task<bool> ValidateUserTokenAsync(string rawToken, string? acceptedAudAppIdUri, string? clientIdFallback, ILogger logger)
         {
             try
             {
@@ -206,7 +187,7 @@ namespace WPSecure.Api.Signatures
                 var jwt = handler.ReadJwtToken(rawToken);
                 var issuer = jwt.Issuer; // e.g., https://sts.windows.net/<tid>/  OR  https://login.microsoftonline.com/<tid>/v2.0
 
-                // Build metadata endpoint from issuer
+                // Metadata for this issuer
                 var baseIssuer = issuer.EndsWith("/", StringComparison.Ordinal) ? issuer : issuer + "/";
                 var metadata = baseIssuer + ".well-known/openid-configuration";
 
@@ -219,8 +200,8 @@ namespace WPSecure.Api.Signatures
                 var cfg = await cfgMgr.GetConfigurationAsync(default);
 
                 var audiences = new List<string>();
-                if (!string.IsNullOrWhiteSpace(expectedAud1)) audiences.Add(expectedAud1!);
-                if (!string.IsNullOrWhiteSpace(expectedAud2)) audiences.Add(expectedAud2!);
+                if (!string.IsNullOrWhiteSpace(acceptedAudAppIdUri)) audiences.Add(acceptedAudAppIdUri!.Trim());
+                if (!string.IsNullOrWhiteSpace(clientIdFallback)) audiences.Add(clientIdFallback!.Trim());
 
                 var tvp = new TokenValidationParameters
                 {

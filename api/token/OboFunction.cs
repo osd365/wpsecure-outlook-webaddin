@@ -58,36 +58,36 @@ namespace WPSecure.Api.Token
                     return res;
                 }
 
-                var tenantId        = _config["BACKEND_TENANTID"]        ?? string.Empty;
-                var backendClientId = _config["BACKEND_CLIENTID"]        ?? string.Empty;
-                var backendSecret   = _config["BACKEND_CLIENTSECRET"]    ?? string.Empty;
-                var authHost        = _config["CLOUD_AUTHORITYHOST"]     ?? "https://login.microsoftonline.com";
-                var expectedAud1    = _config["FRONTEND_CLIENTID"];   // optional
-                var expectedAud2    = _config["FRONTEND_APPIDURI"];   // optional
-                var graphBase       = _config["GRAPH_BASEURL"]           ?? "https://graph.microsoft.com";
-                var scopes          = _config["GRAPH_SCOPES"];
+                // Streamlined env
+                var tenantId    = _config["TENANTID"]       ?? string.Empty;
+                var clientId    = _config["CLIENTID"]       ?? string.Empty;
+                var clientSecret= _config["CLIENTSECRET"]   ?? string.Empty;
+                var authHost    = _config["AUTHORITYHOST"]  ?? "https://login.microsoftonline.com";
+                var graphBase   = _config["GRAPH_BASEURL"]  ?? "https://graph.microsoft.com";
+                var scopes      = _config["GRAPH_SCOPES"]; // may be empty → computed
+                var audUri      = _config["AUDIENCE_APPIDURI"]; // preferred exact audience
                 if (string.IsNullOrWhiteSpace(scopes)) scopes = graphBase.TrimEnd('/') + "/.default";
 
-                if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(backendClientId) || string.IsNullOrWhiteSpace(backendSecret))
+                if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
                 {
                     _logger.LogError("token-obo: server_misconfigured");
                     await res.WriteStringAsync(JsonSerializer.Serialize(new OboResult { Success = false, Error = "server_misconfigured" }, _json));
                     return res;
                 }
 
-                // Validate token (issuer derived from token itself; supports v1 & v2)
-                var valid = await ValidateUserTokenAsync(body.IdToken.Trim(), expectedAud1, expectedAud2, _logger);
+                // Validate token (issuer from token; audience = AUDIENCE_APPIDURI, GUID fallback to CLIENTID)
+                var valid = await ValidateUserTokenAsync(body.IdToken.Trim(), audUri, clientId, _logger);
                 if (!valid)
                 {
                     await res.WriteStringAsync(JsonSerializer.Serialize(new OboResult { Success = false, Error = "invalid_token" }, _json));
                     return res;
                 }
 
-                // OBO to Graph
+                // OBO acquire
                 var authority = authHost.TrimEnd('/') + "/" + tenantId;
                 var cca = ConfidentialClientApplicationBuilder
-                    .Create(backendClientId)
-                    .WithClientSecret(backendSecret)
+                    .Create(clientId)
+                    .WithClientSecret(clientSecret)
                     .WithAuthority(authority)
                     .Build();
 
@@ -100,8 +100,7 @@ namespace WPSecure.Api.Token
                 catch (MsalServiceException msalEx)
                 {
                     _logger.LogError(msalEx, "token-obo: obo_failed {Code} {Message}", msalEx.ErrorCode, msalEx.Message);
-                    await res.WriteStringAsync(JsonSerializer.Serialize(
-                        new OboResult { Success = false, Error = $"obo_failed:{msalEx.ErrorCode}" }, _json));
+                    await res.WriteStringAsync(JsonSerializer.Serialize(new OboResult { Success = false, Error = "obo_failed" }, _json));
                     return res;
                 }
             }
@@ -119,8 +118,8 @@ namespace WPSecure.Api.Token
             }
         }
 
-        // IMPORTANT: Validate against the token's own issuer (supports v1 and v2 tokens)
-        private static async Task<bool> ValidateUserTokenAsync(string rawToken, string? expectedAud1, string? expectedAud2, ILogger logger)
+        // Validate against the token's own issuer (supports v1 and v2) + audience list
+        private static async Task<bool> ValidateUserTokenAsync(string rawToken, string? acceptedAudAppIdUri, string? clientIdFallback, ILogger logger)
         {
             try
             {
@@ -128,7 +127,6 @@ namespace WPSecure.Api.Token
                 var jwt = handler.ReadJwtToken(rawToken);
                 var issuer = jwt.Issuer; // e.g., https://sts.windows.net/<tid>/  OR  https://login.microsoftonline.com/<tid>/v2.0
 
-                // Build metadata endpoint from issuer
                 var baseIssuer = issuer.EndsWith("/", StringComparison.Ordinal) ? issuer : issuer + "/";
                 var metadata = baseIssuer + ".well-known/openid-configuration";
 
@@ -141,8 +139,8 @@ namespace WPSecure.Api.Token
                 var cfg = await cfgMgr.GetConfigurationAsync(default);
 
                 var audiences = new List<string>();
-                if (!string.IsNullOrWhiteSpace(expectedAud1)) audiences.Add(expectedAud1!);
-                if (!string.IsNullOrWhiteSpace(expectedAud2)) audiences.Add(expectedAud2!);
+                if (!string.IsNullOrWhiteSpace(acceptedAudAppIdUri)) audiences.Add(acceptedAudAppIdUri!.Trim());
+                if (!string.IsNullOrWhiteSpace(clientIdFallback)) audiences.Add(clientIdFallback!.Trim());
 
                 var tvp = new TokenValidationParameters
                 {
