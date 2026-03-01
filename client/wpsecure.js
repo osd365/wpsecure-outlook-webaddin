@@ -1,5 +1,5 @@
 /* WPSecure Outlook Add-in Runtime — SSO+OBO Silent Cache Edition
- * Build: 2026-03-01T00:00Z (Msg HTML unchanged; TXT: default-aware + reply cleanup; Reply TXT prepends; Appt HTML safe merge; Retry policy N)
+ * Build: 2026-03-01T00:00Z (Msg HTML unchanged; TXT: default-aware + reply cleanup; NEW TXT button = non-destructive; Appt HTML safe merge; Retry policy N)
  * Policy:
  * - Silent UX (no toasts). Console logs only (no PII, no tokens).
  * - Cache-only insertion on button/event; do nothing if cache miss.
@@ -147,13 +147,11 @@
     });
   }
 
-  // Normalize odd encodings (mis-decoded CR/LF, ZW chars)
+  // Normalize odd encodings (mis-decoded CR/LF, zero-widths)
   function normalizeWeirdText(t){
     if(!t) return '';
-    // Replace some commonly observed mis-decoded CR/LF codepoints with newlines
-    t = t.replace(/[\u0A0D\u0D0A]/g,'\n');
-    // Strip zero-widths / BOM
-    t = t.replace(/[\u200B-\u200D\uFEFF]/g,'');
+    t = t.replace(/[\u0A0D\u0D0A]/g,'\n'); // normalize CR/LF-like runes to newline
+    t = t.replace(/[\u200B-\u200D\uFEFF]/g,''); // strip zero-width/BOM
     return t;
   }
 
@@ -167,7 +165,7 @@
     return { removed, prefixLen: p, normBefore:b, normAfter:a };
   }
 
-  // Cleanup for reply: remove all text between the inserted reply signature and two blank lines before first 'From:' + next 'Sent:'/'Send:'/'Date:' line
+  // Cleanup for reply: remove all text between the inserted reply signature and two blank lines before first 'From:' header
   function cleanupReplyBetweenSignatureAndHeader(fullBody, sigContent){
     const t = normalizeWeirdText(fullBody);
     const sigIdx = t.indexOf(sigContent);
@@ -175,21 +173,14 @@
     const afterSigIdx = sigIdx + sigContent.length;
     const remainder = t.slice(afterSigIdx);
 
-    // Find header start: line beginning with From:
     const headerFromMatch = /(^|\n)From\s*:\s*.*$/mi.exec(remainder);
-    if (!headerFromMatch) return fullBody; // no header found → nothing to clean
+    if (!headerFromMatch) return fullBody;
 
     const hdrStartInRemainder = headerFromMatch.index + (headerFromMatch[1] ? headerFromMatch[1].length : 0);
-    // Optionally verify second line is Sent:/Send:/Date: to be safer
-    const afterFrom = remainder.slice(hdrStartInRemainder);
-    const secondLineMatch = /^(?:.*\n)(Sent|Send|Date)\s*:\s*.*$/mi.exec(afterFrom);
-    // Even if second line isn’t matched, we’ll still keep From: as the header start
-
     const hdrAbsPos = afterSigIdx + hdrStartInRemainder;
-    const keepBeforeHeader = t.slice(0, afterSigIdx).replace(/\s*$/, ''); // trim trailing spaces after sig
+    const keepBeforeHeader = t.slice(0, afterSigIdx).replace(/\s*$/, '');
     const headerOnwards = t.slice(hdrAbsPos);
-
-    const cleaned = keepBeforeHeader + "\n\n" + headerOnwards; // ensure exactly two blank lines between sig and header
+    const cleaned = keepBeforeHeader + "\n\n" + headerOnwards;
     return cleaned;
   }
 
@@ -206,7 +197,7 @@
   }
 
   // ---------------- Insertion (msg HTML unchanged; TXT smart; appt HTML safe merge) ----------------
-  async function insertSignature(content, fmt, scenario){
+  async function insertSignature(content, fmt, scenario, contextKind){
     const isMessage = (function(){ try{ return Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message; }catch(_){ return true; } })();
     const isAppointment = !isMessage;
 
@@ -248,7 +239,7 @@
       });
     }
 
-    // TEXT path (smart default-aware + reply cleanup):
+    // TEXT path (smart):
     try {
       const beforeRaw = await getBodyText();
       const before = normalizeWeirdText(beforeRaw);
@@ -259,27 +250,33 @@
       const { removed, prefixLen, normBefore, normAfter } = diffRemoved(before, after);
       const prefixHasText = /\S/.test(normBefore.slice(0, prefixLen));
 
-      // If Outlook removed something but user had typed above it, restore and exit (do not insert)
-      if (removed && removed.trim().length>0 && prefixHasText) {
-        await setBodyText(beforeRaw); // restore exact original
-        return false;
-      }
-
-      // Baseline = after (client default removed if any)
-      const prev = await getSessionTextSig();
+      // Start from the post-disable baseline (default removed if any)
       let baseline = normAfter;
+
+      // Always remove prior WPSecure text first (idempotence)
+      const prev = await getSessionTextSig();
       if (prev && baseline && baseline.indexOf(prev) >= 0) {
-        baseline = baseline.replace(prev, ''); // remove prior WPSecure text
+        baseline = baseline.replace(prev, '');
       }
 
       let nextBody;
       if (scenario === 'reply') {
-        // Prepend reply signature at the top, then clean everything until the first header
+        // Prepend reply signature then collapse to header
         const pre = content + (baseline ? "\n\n" + baseline : '');
         nextBody = cleanupReplyBetweenSignatureAndHeader(pre, content);
       } else {
-        // NEW: as requested, enforce signature at top; delete everything above (keep a little space)
-        nextBody = "\n\n" + content; // two blank lines at top then WPSecure new
+        // NEW scenario
+        if (contextKind === 'event') {
+          // Event: destructive top-only per requirement
+          nextBody = "\n\n" + content;
+        } else {
+          // Button: non-destructive. If user has typed (any non-whitespace), append signature; else top-only
+          if (/\S/.test(baseline)) {
+            nextBody = baseline + "\n\n" + content;
+          } else {
+            nextBody = "\n\n" + content;
+          }
+        }
       }
 
       const ok = await setBodyText(nextBody);
@@ -322,13 +319,13 @@
   }
 
   // ---------------- Insertion Orchestrator (cache-first with retry) ----------------
-  async function doInsertCurrentContext(maxAttempts){
+  async function doInsertCurrentContext(maxAttempts, contextKind){
     const itemType = (function(){ try{
       return Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message ? 'message' : 'appointment';
     }catch(_){ return 'message'; } })();
     const fmt = await getBodyFormat();
     const scenario = itemType==='message' ? await getComposeScenario() : 'new';
-    log('info','insert:scenario', { item:itemType, fmt, compose:scenario });
+    log('info','insert:scenario', { item:itemType, fmt, compose:scenario, ctx:contextKind });
 
     const key = makeKey(itemType, fmt, scenario);
     let payload = cacheGet(key);
@@ -337,7 +334,6 @@
       const attempts = Math.max(0, maxAttempts|0);
       payload = await retryBootstrapUntilCached(itemType, fmt, scenario, attempts, 250);
       if(!payload && itemType==='appointment'){
-        // appointment fallback
         const fallbackKey = makeKey('message', fmt, 'new');
         payload = cacheGet(fallbackKey) || await retryBootstrapUntilCached('message', fmt, 'new', attempts, 250);
         if (payload) log('info','insert:appt-fallback', { from: key, to: fallbackKey });
@@ -345,7 +341,7 @@
     }
 
     if(!payload){ log('warn','insert:cache-miss', { key }); return false; }
-    const ok = await insertSignature(payload, fmt, scenario);
+    const ok = await insertSignature(payload, fmt, scenario, contextKind);
     log('info', ok ? 'insert:done' : 'insert:failed');
     return ok;
   }
@@ -358,13 +354,13 @@
       await Office.onReady();
       if(!__eventInsertedOnce){
         __eventInsertedOnce = true;
-        await doInsertCurrentContext(RETRY_EVENT);
+        await doInsertCurrentContext(RETRY_EVENT, 'event');
       } else { log('debug','event:skipped-second-run'); }
     } catch(_) { }
     finally { try{ event && event.completed && event.completed(); }catch(_){} }
   }
   async function onReinsert(event){
-    try{ await Office.onReady(); await doInsertCurrentContext(RETRY_BUTTON); }
+    try{ await Office.onReady(); await doInsertCurrentContext(RETRY_BUTTON, 'button'); }
     catch(_){ }
     finally{ try{ event && event.completed && event.completed(); }catch(_){} }
   }
