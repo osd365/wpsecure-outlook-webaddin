@@ -1,5 +1,5 @@
 /* WPSecure Outlook Add-in Runtime — SSO+OBO Silent Cache Edition
- * Build: 2026-03-01T00:00Z (Msg HTML unchanged; TXT: default-aware + no markers; Reply TXT prepends; Appt HTML safe merge; Retry policy N)
+ * Build: 2026-03-01T00:00Z (Msg HTML unchanged; TXT: default-aware + reply cleanup; Reply TXT prepends; Appt HTML safe merge; Retry policy N)
  * Policy:
  * - Silent UX (no toasts). Console logs only (no PII, no tokens).
  * - Cache-only insertion on button/event; do nothing if cache miss.
@@ -147,12 +147,12 @@
     });
   }
 
-  // Normalize odd encodings (e.g., CR/LF mis-decoded to Indic blocks); strip ZW chars
+  // Normalize odd encodings (mis-decoded CR/LF, ZW chars)
   function normalizeWeirdText(t){
     if(!t) return '';
-    // Replace common mis-decoded CR/LF runes with real newlines
+    // Replace some commonly observed mis-decoded CR/LF codepoints with newlines
     t = t.replace(/[\u0A0D\u0D0A]/g,'\n');
-    // Remove zero-width / BOM
+    // Strip zero-widths / BOM
     t = t.replace(/[\u200B-\u200D\uFEFF]/g,'');
     return t;
   }
@@ -165,6 +165,32 @@
     let s=0; while(s<bl-p && s<al-p && b.charCodeAt(bl-1-s)===a.charCodeAt(al-1-s)) s++;
     const removed = b.slice(p, bl - s);
     return { removed, prefixLen: p, normBefore:b, normAfter:a };
+  }
+
+  // Cleanup for reply: remove all text between the inserted reply signature and two blank lines before first 'From:' + next 'Sent:'/'Send:'/'Date:' line
+  function cleanupReplyBetweenSignatureAndHeader(fullBody, sigContent){
+    const t = normalizeWeirdText(fullBody);
+    const sigIdx = t.indexOf(sigContent);
+    if (sigIdx < 0) return fullBody;
+    const afterSigIdx = sigIdx + sigContent.length;
+    const remainder = t.slice(afterSigIdx);
+
+    // Find header start: line beginning with From:
+    const headerFromMatch = /(^|\n)From\s*:\s*.*$/mi.exec(remainder);
+    if (!headerFromMatch) return fullBody; // no header found → nothing to clean
+
+    const hdrStartInRemainder = headerFromMatch.index + (headerFromMatch[1] ? headerFromMatch[1].length : 0);
+    // Optionally verify second line is Sent:/Send:/Date: to be safer
+    const afterFrom = remainder.slice(hdrStartInRemainder);
+    const secondLineMatch = /^(?:.*\n)(Sent|Send|Date)\s*:\s*.*$/mi.exec(afterFrom);
+    // Even if second line isn’t matched, we’ll still keep From: as the header start
+
+    const hdrAbsPos = afterSigIdx + hdrStartInRemainder;
+    const keepBeforeHeader = t.slice(0, afterSigIdx).replace(/\s*$/, ''); // trim trailing spaces after sig
+    const headerOnwards = t.slice(hdrAbsPos);
+
+    const cleaned = keepBeforeHeader + "\n\n" + headerOnwards; // ensure exactly two blank lines between sig and header
+    return cleaned;
   }
 
   // ---------------- Retry bootstrap until cached ----------------
@@ -222,11 +248,10 @@
       });
     }
 
-    // TEXT path (smart default-aware):
+    // TEXT path (smart default-aware + reply cleanup):
     try {
       const beforeRaw = await getBodyText();
       const before = normalizeWeirdText(beforeRaw);
-      // Disable client signature (if present)
       try { await disableClientSignature(); } catch(_) {}
       const afterRaw = await getBodyText();
       const after = normalizeWeirdText(afterRaw);
@@ -247,19 +272,14 @@
         baseline = baseline.replace(prev, ''); // remove prior WPSecure text
       }
 
-      // If disable removed nothing AND baseline looks like only-signature area and user hasn't typed,
-      // allow treating the top as default and clear it for NEW scenario.
-      if ((!removed || !removed.trim()) && scenario==='new'){
-        const hasAnyUserText = /\S/.test(baseline);
-        if (!hasAnyUserText) baseline = '';
-      }
-
-      // Build next body (reply at top, new at end)
       let nextBody;
       if (scenario === 'reply') {
-        nextBody = content + (baseline ? "\n\n" + baseline : '');
+        // Prepend reply signature at the top, then clean everything until the first header
+        const pre = content + (baseline ? "\n\n" + baseline : '');
+        nextBody = cleanupReplyBetweenSignatureAndHeader(pre, content);
       } else {
-        nextBody = (baseline ? baseline + "\n\n" : '') + content;
+        // NEW: as requested, enforce signature at top; delete everything above (keep a little space)
+        nextBody = "\n\n" + content; // two blank lines at top then WPSecure new
       }
 
       const ok = await setBodyText(nextBody);
