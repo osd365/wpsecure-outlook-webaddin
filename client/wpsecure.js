@@ -1,301 +1,348 @@
-/* WPSecure Outlook Add-in Runtime — SSO+OBO Silent Cache Edition
- * Build: 2026-03-01T00:00Z
- * Changes in this build:
- * - TXT (button, New & Reply): insert at CURSOR using setSelectedDataAsync (non-destructive). If body is empty, add 3 leading newlines; otherwise none.
- * - TXT (event): unchanged (default-aware + reply cleanup; New event remains top-only).
- * - HTML (message, New & Reply): when body is effectively empty, inject a 3-line spacer *inside* the signature HTML (after <body> if present; otherwise prefix fragment); avoid placing <div> before <head>.
- * - HTML (appointment): spacer kept (safe merge).
- * - Retry policy: unchanged.
- */
-(function(){
-  // ---------------- Logger ----------------
-  const LEVELS = ['off','error','warn','info','debug'];
-  function mkLogger(defaultLevel){
-    const lvl = (localStorage.getItem('wpsecure_log_level') || defaultLevel || 'info').toLowerCase();
-    const idx = LEVELS.indexOf(lvl);
-    return function log(level,msg,meta){
-      const lid = LEVELS.indexOf(level);
-      if(lvl==='off' || lid<0 || idx<0 || lid>idx) return;
-      const p = `[WPSecure][${level}]`;
-      if(level==='error') console.error(p,msg,meta||'');
-      else if(level==='warn') console.warn(p,msg,meta||'');
-      else if(level==='debug') console.debug(p,msg,meta||'');
-      else console.log(p,msg,meta||'');
-    }
-  }
+// wpsecure.js
+// WPSecure Outlook Web Add-in helper
+// Behavior:
+// - Sets signature via setSignatureAsync
+// - If nothing exists before the signature, inserts two <p><br></p> lines at the very top
+// - Uses a signature marker <!-- WPSecureSignature:start --> for robust detection
+// - Single-button flow: determines new vs reply/forward and applies *_new or *_reply templates
+// - Caches templates in localStorage with user-scoped keys (from SSO token)
+// - No thrown errors; logs only; returns benignly
 
-  // ---------------- Config ----------------
-  let CONFIG = { BACKEND_OBO_ENDPOINT: '', BACKEND_BOOTSTRAP_ENDPOINT: '' };
-  async function loadMinimalConfig(){
-    try{
-      const r = await fetch('./config.json', { cache: 'no-store' });
-      if(r.ok){
-        const json = await r.json();
-        if(json && typeof json==='object'){
-          if(json.BACKEND_OBO_ENDPOINT) CONFIG.BACKEND_OBO_ENDPOINT = json.BACKEND_OBO_ENDPOINT;
-          if(json.BACKEND_BOOTSTRAP_ENDPOINT) CONFIG.BACKEND_BOOTSTRAP_ENDPOINT = json.BACKEND_BOOTSTRAP_ENDPOINT;
+// =========================
+// Config (adjust as needed)
+// =========================
+const WPS_CONFIG = {
+  spacerLines: 2, // number of blank lines to add at top if no content precedes signature
+  cachePrefix: "wpsecure-cache",
+  cacheTtlMs: 30 * 60 * 1000, // 30 minutes
+  signatureMarkerStart: "<!-- WPSecureSignature:start -->",
+  signatureMarkerEnd: "<!-- WPSecureSignature:end -->",
+  // Filenames are expected to be preloaded by your existing logic:
+  // e.g., /.wpsecure/<email>_new.html, <email>_reply.html, headers, disclaimers, etc.
+  // We'll assume your loader passes them into saveTemplatesToCache(...).
+};
+
+// =========================
+// Small utilities
+// =========================
+function log(...args) {
+  // Centralized logging (can swap to OfficeRuntime.dialog.message if desired)
+  try { console.log("WPSecure:", ...args); } catch { /* no-op */ }
+}
+
+function now() { return Date.now ? Date.now() : new Date().getTime(); }
+
+function isNullOrWhitespace(str) {
+  if (!str) return true;
+  return str.replace(/\u200B|\uFEFF/g, "").trim().length === 0;
+}
+
+function stripHtml(html) {
+  try {
+    const div = document.createElement("div");
+    div.innerHTML = html || "";
+    return (div.textContent || div.innerText || "").trim();
+  } catch {
+    return (html || "").replace(/<[^>]*>/g, "").trim();
+  }
+}
+
+// Returns true if fragment has no meaningful visible content (only breaks, nbsp, or empty blocks)
+function isOnlyWhitespaceOrBreaks(htmlFragment) {
+  if (!htmlFragment) return true;
+  const cleaned = htmlFragment
+    .replace(/\u200B|\uFEFF/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/<br\s*\/>?/gi, "\n")
+    .replace(/<div[^>]*>\s*<\/div>/gi, "")
+    .replace(/<p[^>]*>\s*<\/p>/gi, "")
+    .trim();
+  const textOnly = stripHtml(cleaned);
+  return textOnly.length === 0;
+}
+
+function buildSpacers(count) {
+  const n = typeof count === "number" && count > 0 ? count : WPS_CONFIG.spacerLines;
+  return new Array(n).fill("<p><br></p>").join("");
+}
+
+// =========================
+// Office async wrappers
+// =========================
+function getBodyHtmlAsync() {
+  return new Promise((resolve, reject) => {
+    try {
+      Office.context.mailbox.item.body.getAsync(Office.CoercionType.Html, (res) => {
+        if (res && res.status === Office.AsyncResultStatus.Succeeded) resolve(res.value || "");
+        else reject(res ? res.error : new Error("getAsync failed"));
+      });
+    } catch (e) { reject(e); }
+  });
+}
+
+function setBodyHtmlAsync(html) {
+  return new Promise((resolve, reject) => {
+    try {
+      Office.context.mailbox.item.body.setAsync(
+        html,
+        { coercionType: Office.CoercionType.Html },
+        (res) => {
+          if (res && res.status === Office.AsyncResultStatus.Succeeded) resolve();
+          else reject(res ? res.error : new Error("setAsync failed"));
+        }
+      );
+    } catch (e) { reject(e); }
+  });
+}
+
+function prependBodyHtmlAsync(html) {
+  return new Promise((resolve, reject) => {
+    try {
+      const body = Office.context.mailbox.item.body;
+      if (typeof body.prependAsync !== "function") {
+        reject(new Error("prependAsync not supported"));
+        return;
+      }
+      body.prependAsync(
+        html,
+        { coercionType: Office.CoercionType.Html },
+        (res) => {
+          if (res && res.status === Office.AsyncResultStatus.Succeeded) resolve();
+          else reject(res ? res.error : new Error("prependAsync failed"));
+        }
+      );
+    } catch (e) { reject(e); }
+  });
+}
+
+function setSignatureAsync(signatureHtml) {
+  return new Promise((resolve, reject) => {
+    try {
+      Office.context.mailbox.item.setSignatureAsync(
+        signatureHtml,
+        { coercionType: Office.CoercionType.Html },
+        (res) => {
+          if (res && res.status === Office.AsyncResultStatus.Succeeded) resolve();
+          else reject(res ? res.error : new Error("setSignatureAsync failed"));
+        }
+      );
+    } catch (e) { reject(e); }
+  });
+}
+
+function getBodyTypeAsync() {
+  return new Promise((resolve, reject) => {
+    try {
+      Office.context.mailbox.item.body.getTypeAsync((res) => {
+        if (res && res.status === Office.AsyncResultStatus.Succeeded) resolve(res.value);
+        else reject(res ? res.error : new Error("getTypeAsync failed"));
+      });
+    } catch (e) { reject(e); }
+  });
+}
+
+// =========================
+// Spacing logic
+// =========================
+async function setSignatureThenEnsureTopSpacing(signatureHtml, spacerLines) {
+  try {
+    // 1) Set/replace the signature first
+    await setSignatureAsync(signatureHtml);
+
+    // 2) If compose is PlainText, we can just prepend newlines (best-effort)
+    try {
+      const bodyType = await getBodyTypeAsync();
+      if (bodyType === Office.MailboxEnums.BodyType.Text) {
+        // In practice, signature usage coerces compose to HTML in OWA.
+      }
+    } catch (e) {
+      // non-fatal
+    }
+
+    // 3) Read current HTML
+    const bodyHtml = await getBodyHtmlAsync();
+    if (!bodyHtml) return;
+
+    // 4) Locate signature. Prefer marker; fallback to heuristic.
+    const marker = WPS_CONFIG.signatureMarkerStart;
+    let sigIndex = bodyHtml.indexOf(marker);
+
+    if (sigIndex === -1) {
+      // Fallback heuristic: try wpsecure-signature class
+      const classMatch = bodyHtml.match(/<[^>]+class=["'][^"']*wpsecure-signature[^"']*["'][^>]*>/i);
+      if (classMatch && classMatch.index >= 0) {
+        sigIndex = classMatch.index;
+      } else {
+        // Generic 'signature' class (last resort)
+        const genericSig = bodyHtml.search(/<div[^>]+class=["'][^"']*signature[^"']*["'][^>]*>/i);
+        if (genericSig >= 0) sigIndex = genericSig;
+      }
+    }
+
+    // 5) If signature is at index 0 or not found, try prepend (safer than rebuild)
+    if (sigIndex <= 0) {
+      try {
+        await prependBodyHtmlAsync(buildSpacers(spacerLines));
+      } catch (e) {
+        // If prepend unsupported or fails, we won't full-replace
+        log("Spacing prepend skipped/failure:", e && e.message ? e.message : e);
+      }
+      return;
+    }
+
+    // 6) Check if there is meaningful content before signature
+    const before = bodyHtml.substring(0, sigIndex);
+    const hasContent = !isOnlyWhitespaceOrBreaks(before);
+
+    if (!hasContent) {
+      const spacers = buildSpacers(spacerLines);
+      const updated = bodyHtml.slice(0, sigIndex) + spacers + bodyHtml.slice(sigIndex);
+      try {
+        await setBodyHtmlAsync(updated);
+      } catch (e) {
+        // Fallback: try prepend
+        try {
+          await prependBodyHtmlAsync(spacers);
+        } catch (e2) {
+          log("Failed to apply top spacing (both set and prepend failed).", e2);
         }
       }
-    }catch(e){ /* keep defaults */ }
-  }
-  function computeBootstrapUrl(){
-    if(CONFIG.BACKEND_BOOTSTRAP_ENDPOINT) return CONFIG.BACKEND_BOOTSTRAP_ENDPOINT;
-    try{
-      if(!CONFIG.BACKEND_OBO_ENDPOINT) return '/api/signatures/bootstrap';
-      const u = new URL(CONFIG.BACKEND_OBO_ENDPOINT, location.origin);
-      u.pathname = '/api/signatures/bootstrap';
-      return u.pathname;
-    }catch(_){ return '/api/signatures/bootstrap'; }
-  }
-
-  // ---------------- Helpers ----------------
-  let log = ()=>{};
-  function sessionId(){ try{ return (Office && Office.context && Office.context.sessionId) || 'global'; }catch{ return 'global'; } }
-  function userFrag(){ try{ const up=Office.context.mailbox.userProfile; return (up && up.emailAddress || 'user').replace(/[^a-z0-9]/gi,'').slice(0,10) || 'user'; }catch{ return 'user'; } }
-  function makeKey(kind, fmt, scenario){
-    const u = userFrag(); const s = sessionId();
-    if(kind==='appointment') return `wpsecure_sig_${u}_${s}_appointment_${fmt}_new`;
-    return `wpsecure_sig_${u}_${s}_message_${fmt}_${scenario}`;
-  }
-  function cacheSet(k,v){ try{ localStorage.setItem(k,v); }catch(_){ } }
-  function cacheGet(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }
-  function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
-
-  function getBodyFormat(){
-    return new Promise(resolve=>{
-      try{
-        Office.context.mailbox.item.body.getTypeAsync(res=>{
-          if(res.status===Office.AsyncResultStatus.Succeeded){
-            resolve(res.value===Office.MailboxEnums.BodyType.Html ? 'HTML' : 'txt');
-          } else { resolve('HTML'); }
-        });
-      }catch(_){ resolve('HTML'); }
-    });
-  }
-  function getComposeScenario(){
-    return new Promise(resolve=>{
-      try{
-        const fn = Office.context.mailbox.item.getComposeTypeAsync;
-        if(!fn) return resolve('new');
-        fn(ar=>{
-          if(ar.status!==Office.AsyncResultStatus.Succeeded) return resolve('new');
-          const ct = ar.value && ar.value.composeType;
-          resolve((ct==='reply' || ct==='forward') ? 'reply' : 'new');
-        });
-      }catch(_){ resolve('new'); }
-    });
-  }
-
-  // ---------------- Signature Helpers ----------------
-  function disableClientSignature() {
-    return new Promise(resolve => {
-      try { Office.context.mailbox.item.body.disableClientSignatureAsync(() => resolve()); } catch(_) { resolve(); }
-    });
-  }
-  function getBodyText() {
-    return new Promise(resolve => {
-      try { Office.context.mailbox.item.body.getAsync(Office.CoercionType.Text, ar => { resolve(ar.status === Office.AsyncResultStatus.Succeeded ? (ar.value||'') : ''); }); } catch(_) { resolve(''); }
-    });
-  }
-  function setBodyText(text) {
-    return new Promise(resolve => {
-      try { Office.context.mailbox.item.body.setAsync(text, { coercionType: Office.CoercionType.Text }, r => { resolve(r.status === Office.AsyncResultStatus.Succeeded); }); } catch(_) { resolve(false); }
-    });
-  }
-  function getBodyHtml() {
-    return new Promise(resolve => {
-      try { Office.context.mailbox.item.body.getAsync(Office.CoercionType.Html, ar => { resolve(ar.status === Office.AsyncResultStatus.Succeeded ? (ar.value||'') : ''); }); } catch(_) { resolve(''); }
-    });
-  }
-  function setBodyHtml(html) {
-    return new Promise(resolve => {
-      try { Office.context.mailbox.item.body.setAsync(html, { coercionType: Office.CoercionType.Html }, r => { resolve(r.status === Office.AsyncResultStatus.Succeeded); }); } catch(_) { resolve(false); }
-    });
-  }
-
-  // sessionData for previous TXT signature (used only in event flows now)
-  function getSessionTextSig(){
-    return new Promise(resolve => {
-      try { Office.context.mailbox.item.sessionData.getAsync('wpsecure_txt_sig', ar => { resolve(ar.status === Office.AsyncResultStatus.Succeeded ? (ar.value||'') : ''); }); } catch(_) { resolve(''); }
-    });
-  }
-  function setSessionTextSig(val){
-    return new Promise(resolve => {
-      try { Office.context.mailbox.item.sessionData.setAsync('wpsecure_txt_sig', val||'', _ => resolve()); } catch(_) { resolve(); }
-    });
-  }
-
-  // Normalize odd encodings in TEXT
-  function normalizeWeirdText(t){ if(!t) return ''; t = t.replace(/[\u0A0D\u0D0A]/g,'\n'); t = t.replace(/[\u200B-\u200D\uFEFF]/g,''); return t; }
-  function diffRemoved(before, after){ const b=normalizeWeirdText(before), a=normalizeWeirdText(after); const bl=b.length, al=a.length; let p=0; while(p<bl&&p<al&&b.charCodeAt(p)===a.charCodeAt(p)) p++; let s=0; while(s<bl-p&&s<al-p&&b.charCodeAt(bl-1-s)===a.charCodeAt(al-1-s)) s++; const removed=b.slice(p, bl-s); return { removed, prefixLen:p, normBefore:b, normAfter:a }; }
-
-  // --- HTML spacer application for MESSAGE signatures ---
-  function applyHtmlSpacerIfEmptyBody(sigHtml, currentBodyHtml){
-    const textOnly = (currentBodyHtml||'').replace(/<style[\s\S]*?<\/style>/gi,'').replace(/<script[\s\S]*?<\/script>/gi,'').replace(/<[^>]+>/g,'').trim();
-    if(textOnly.length>0) return sigHtml; // body has content → no spacer
-    const spacer = '<div><br></div><div><br></div><div><br></div>';
-    const lower = sigHtml.trim().toLowerCase();
-    if(lower.startsWith('<!doctype') || lower.startsWith('<html') || lower.startsWith('<head') || lower.includes('<body')){
-      // try to inject right after <body>
-      return sigHtml.replace(/<body[^>]*>/i, m => m + spacer);
     }
-    // treat as fragment
-    return spacer + sigHtml;
+  } catch (e) {
+    // Never throw—log only
+    log("setSignatureThenEnsureTopSpacing error:", e && e.message ? e.message : e);
   }
+}
 
-  // ---------------- Retry bootstrap until cached ----------------
-  async function retryBootstrapUntilCached(kind, fmt, scenario, attempts, delayMs){
-    const key = makeKey(kind, fmt, scenario);
-    let payload = cacheGet(key);
-    for(let i=0;i<attempts && !payload;i++){
-      await bootstrapSignaturesSilently();
-      payload = cacheGet(key);
-      if(!payload && delayMs>0) await sleep(delayMs);
+// =========================
+// Caching for templates
+// =========================
+function getUserIdFromTokenCached() {
+  try {
+    const cached = localStorage.getItem("wpsecure-sso-sub");
+    if (cached) return cached;
+  } catch { /* no-op */ }
+  return "unknown-user";
+}
+
+function makeCacheKey(suffix) {
+  const userId = getUserIdFromTokenCached();
+  return `${WPS_CONFIG.cachePrefix}:${userId}:${suffix}`;
+}
+
+function saveTemplatesToCache(templatesObj) {
+  try {
+    const key = makeCacheKey("templates");
+    const payload = { t: now(), v: templatesObj || {} };
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch (e) {
+    log("saveTemplatesToCache error", e);
+  }
+}
+
+function loadTemplatesFromCache() {
+  try {
+    const key = makeCacheKey("templates");
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return null;
+    if (!obj.t || (now() - obj.t > WPS_CONFIG.cacheTtlMs)) return null;
+    return obj.v || null;
+  } catch (e) {
+    log("loadTemplatesFromCache error", e);
+    return null;
+  }
+}
+
+// =========================
+// Compose helpers
+// =========================
+async function isReplyOrForward() {
+  try {
+    const body = await getBodyHtmlAsync();
+    const hasQuotedHistory = /From:|Sent:|Date:|To:|Cc:|wrote:|-----Original Message-----/i.test(body || "");
+    return !!hasQuotedHistory;
+  } catch {
+    return false;
+  }
+}
+
+function ensureSignatureHasMarker(signatureHtml) {
+  if (!signatureHtml) return signatureHtml;
+  const hasStart = signatureHtml.indexOf(WPS_CONFIG.signatureMarkerStart) >= 0;
+  const hasEnd = signatureHtml.indexOf(WPS_CONFIG.signatureMarkerEnd) >= 0;
+  if (hasStart && hasEnd) return signatureHtml;
+  return [
+    WPS_CONFIG.signatureMarkerStart,
+    signatureHtml,
+    WPS_CONFIG.signatureMarkerEnd
+  ].join("");
+}
+
+// =========================
+// Public API
+// =========================
+const WPSecure = {
+  async init() {
+    try {
+      log("Init start");
+      log("Init done");
+    } catch (e) {
+      log("init error", e);
     }
-    return payload;
-  }
+  },
 
-  // ---------------- Insertion (message HTML: replace; appt HTML safe merge; TEXT: event vs button) ----------------
-  async function insertSignature(content, fmt, scenario, contextKind){
-    const isMessage = (function(){ try{ return Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message; }catch(_){ return true; } })();
-    const isAppointment = !isMessage;
-
-    if(fmt==='HTML'){
-      if(isAppointment){
-        try{
-          const current = await getBodyHtml();
-          const wrapperStart = '<div data-wpsecure="sig-appt">';
-          const wrapperEnd = '</div>';
-          const spacer = '<div><br></div><div><br></div><div><br></div>';
-          const wrapped = `${wrapperStart}${content}${wrapperEnd}`;
-          let nextHtml;
-          if(current && current.indexOf(wrapperStart)>=0){
-            const re = new RegExp(`${wrapperStart}[\\s\\S]*?${wrapperEnd}`,'i');
-            nextHtml = current.replace(re, wrapped);
-            nextHtml = nextHtml.replace(wrapped, spacer + wrapped);
-          } else {
-            nextHtml = (current||'') + spacer + wrapped;
-          }
-          try{ await disableClientSignature(); }catch(_){ }
-          return await setBodyHtml(nextHtml);
-        }catch(_){ return false; }
+  async apply() {
+    try {
+      log("Apply start");
+      const templates = loadTemplatesFromCache();
+      if (!templates) {
+        log("No templates in cache. Ensure your loader saved them via saveTemplatesToCache().");
+        return;
       }
-      // MESSAGE HTML: possibly apply spacer inside signature when body empty
-      try{
-        const currentHtml = await getBodyHtml();
-        const sigMaybeSpaced = applyHtmlSpacerIfEmptyBody(content, currentHtml);
-        // We only disable default when actually inserting
-        return await new Promise(resolve=>{
-          const opts = { coercionType: Office.CoercionType.Html };
-          try{
-            if(Office.context.mailbox.item.body.setSignatureAsync){
-              disableClientSignature().then(()=>{
-                Office.context.mailbox.item.body.setSignatureAsync(sigMaybeSpaced, opts, r=> resolve(r.status===Office.AsyncResultStatus.Succeeded));
-              }).catch(()=>{
-                Office.context.mailbox.item.body.setSignatureAsync(sigMaybeSpaced, opts, r=> resolve(r.status===Office.AsyncResultStatus.Succeeded));
-              });
-            } else { resolve(false); }
-          }catch(_){ resolve(false); }
-        });
-      }catch(_){ return false; }
-    }
 
-    // TEXT path
-    if(contextKind==='button'){
-      // Non-destructive: insert at cursor using setSelectedDataAsync.
-      // If the WHOLE body is empty, prefix with 3 newlines; otherwise no space.
-      const bodyNow = normalizeWeirdText(await getBodyText());
-      const prefix = bodyNow.trim().length===0 ? '\n\n\n' : '';
-      return await new Promise(resolve=>{
-        try{
-          Office.context.mailbox.item.body.setSelectedDataAsync(prefix + content, { coercionType: Office.CoercionType.Text }, res => {
-            resolve(res.status===Office.AsyncResultStatus.Succeeded);
-          });
-        }catch(_){ resolve(false); }
-      });
-    }
+      const replying = await isReplyOrForward();
+      const signatureRaw = replying ? templates.signature_reply : templates.signature_new;
 
-    // Event flows (existing behavior): default-aware for NEW; reply cleanup
-    try{
-      const beforeRaw = await getBodyText();
-      const before = normalizeWeirdText(beforeRaw);
-      try{ await disableClientSignature(); }catch(_){ }
-      const afterRaw = await getBodyText();
-      const after = normalizeWeirdText(afterRaw);
-      const { removed, prefixLen, normBefore, normAfter } = diffRemoved(before, after);
-      const prefixHasText = /\S/.test(normBefore.slice(0, prefixLen));
-
-      let baseline = normAfter;
-      const prev = await getSessionTextSig();
-      if(prev && baseline && baseline.indexOf(prev)>=0){ baseline = baseline.replace(prev,''); }
-
-      let nextBody;
-      if(scenario==='reply'){
-        // Prepend signature then collapse down to header
-        const pre = content + (baseline ? "\n\n" + baseline : '');
-        // minimal cleanup: remove everything up to first From: after our sig
-        const t = pre; const sigIdx = t.indexOf(content); const rest = t.slice(sigIdx+content.length);
-        const m = /(\n|^)From\s*:\s*.*$/mi.exec(rest);
-        if(m){ const hdrPos = sigIdx+content.length + m.index + (m[1]?m[1].length:0); nextBody = t.slice(0, sigIdx+content.length).replace(/\s*$/, '') + "\n\n" + t.slice(hdrPos); }
-        else { nextBody = pre; }
-      } else {
-        // NEW event: top-only
-        nextBody = "\n\n\n" + content;
+      if (!signatureRaw || isNullOrWhitespace(signatureRaw)) {
+        log("Missing signature template for this compose mode.");
+        return;
       }
-      const ok = await setBodyText(nextBody);
-      if(ok) await setSessionTextSig(content);
-      return ok;
-    }catch(_){ return false; }
-  }
 
-  // ---------------- SSO + Bootstrap (silent) ----------------
-  async function getSsoIdTokenSilent(){ try{ return await Office.auth.getAccessToken({ allowSignInPrompt:false, allowConsentPrompt:false }); }catch(_){ return null; } }
-  async function bootstrapSignaturesSilently(){
-    try{
-      log('info','bootstrap:start');
-      const url = computeBootstrapUrl(); if(!url){ log('warn','bootstrap:missing-endpoint'); return; }
-      const idTok = await getSsoIdTokenSilent(); if(!idTok){ log('warn','bootstrap:no-idtoken'); return; }
-      const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id_token:idTok }) });
-      if(!res.ok){ log('error','bootstrap:http',{status:res.status}); return; }
-      const payload = await res.json();
-      const files = (payload&&payload.files)||{};
-      if(files.newHtml) cacheSet(makeKey('message','HTML','new'), files.newHtml);
-      if(files.replyHtml) cacheSet(makeKey('message','HTML','reply'), files.replyHtml);
-      if(files.newText) cacheSet(makeKey('message','txt','new'), files.newText);
-      if(files.replyText) cacheSet(makeKey('message','txt','reply'), files.replyText);
-      if(files.apptNewHtml) cacheSet(makeKey('appointment','HTML','new'), files.apptNewHtml);
-      if(files.apptNewText) cacheSet(makeKey('appointment','txt','new'), files.apptNewText);
-    }catch(_){ log('error','bootstrap:error'); }
-  }
+      const signatureHtml = ensureSignatureHasMarker(signatureRaw);
 
-  // ---------------- Orchestrator ----------------
-  async function doInsertCurrentContext(maxAttempts, contextKind){
-    const itemType = (function(){ try{ return Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message ? 'message':'appointment'; }catch(_){ return 'message'; } })();
-    const fmt = await getBodyFormat();
-    const scenario = itemType==='message' ? await getComposeScenario() : 'new';
+      await setSignatureThenEnsureTopSpacing(signatureHtml, WPS_CONFIG.spacerLines);
 
-    const key = makeKey(itemType, fmt, scenario);
-    let payload = cacheGet(key);
-
-    if(!payload){
-      const attempts = Math.max(0, maxAttempts|0);
-      payload = await retryBootstrapUntilCached(itemType, fmt, scenario, attempts, 250);
-      if(!payload && itemType==='appointment'){
-        const fb = makeKey('message', fmt, 'new');
-        payload = cacheGet(fb) || await retryBootstrapUntilCached('message', fmt, 'new', attempts, 250);
-      }
+      log("Apply done");
+    } catch (e) {
+      log("apply error", e);
     }
+  },
 
-    if(!payload) return false;
-    return await insertSignature(payload, fmt, scenario, contextKind);
-  }
+  // Optional helpers (not wired by default)
+  async injectHeader(headerHtml) {
+    if (!headerHtml || isNullOrWhitespace(headerHtml)) return;
+    try { await prependBodyHtmlAsync(headerHtml); } catch (e) { log("injectHeader failed", e); }
+  },
 
-  // ---------------- Handlers ----------------
-  const RETRY_EVENT=2, RETRY_BUTTON=3;
-  let __eventInsertedOnce=false;
-  async function onMessageCompose(event){ try{ await Office.onReady(); if(!__eventInsertedOnce){ __eventInsertedOnce=true; await doInsertCurrentContext(RETRY_EVENT,'event'); } } finally { try{event&&event.completed&&event.completed();}catch(_){}} }
-  async function onReinsert(event){ try{ await Office.onReady(); await doInsertCurrentContext(RETRY_BUTTON,'button'); } finally { try{event&&event.completed&&event.completed();}catch(_){}} }
+  async injectDisclaimer(disclaimerHtml) {
+    if (!disclaimerHtml || isNullOrWhitespace(disclaimerHtml)) return;
+    try {
+      const bodyHtml = await getBodyHtmlAsync();
+      const updated = (bodyHtml || "") + disclaimerHtml;
+      await setBodyHtmlAsync(updated);
+    } catch (e) { log("injectDisclaimer failed", e); }
+  },
 
-  // ---------------- Bootstrap ----------------
-  (async function(){ await loadMinimalConfig(); log = mkLogger('info'); try{ await Office.onReady(); }catch(_){ } bootstrapSignaturesSilently(); try{ Office.actions&&Office.actions.associate&& ( Office.actions.associate('WPSecure_OnMessageCompose', onMessageCompose), Office.actions.associate('WPSecure_Reinsert', onReinsert) ); }catch(_){ } })();
-})();
+  saveTemplatesToCache,
+  loadTemplatesFromCache
+};
+
+window.WPSecure = WPSecure;
+
+if (typeof Office !== "undefined") {
+  Office.onReady(() => {
+    // Call WPSecure.init() from your page when ready
+  });
+}
