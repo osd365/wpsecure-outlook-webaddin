@@ -1,4 +1,6 @@
 
+using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -21,8 +23,8 @@ namespace WPSecure.Api.Token
 
     public sealed class OboResult
     {
-        [JsonPropertyName("success")] public bool Success { get; set; }
-        [JsonPropertyName("error")] public string? Error { get; set; }
+        [JsonPropertyName("success")]     public bool Success { get; set; }
+        [JsonPropertyName("error")]       public string? Error { get; set; }
         [JsonPropertyName("access_token")] public string? AccessToken { get; set; }
     }
 
@@ -46,7 +48,6 @@ namespace WPSecure.Api.Token
         {
             var res = req.CreateResponse(HttpStatusCode.OK);
             res.Headers.Add("Content-Type", "application/json; charset=utf-8");
-
             try
             {
                 var body = await JsonSerializer.DeserializeAsync<OboRequest>(req.Body, _json);
@@ -57,14 +58,14 @@ namespace WPSecure.Api.Token
                     return res;
                 }
 
-                var tenantId = _config["BACKEND_TENANTID"] ?? string.Empty;
-                var backendClientId = _config["BACKEND_CLIENTID"] ?? string.Empty;
-                var backendSecret = _config["BACKEND_CLIENTSECRET"] ?? string.Empty;
-                var authHost = _config["CLOUD_AUTHORITYHOST"] ?? "https://login.microsoftonline.com";
-                var expectedAud1 = _config["FRONTEND_CLIENTID"];
-                var expectedAud2 = _config["FRONTEND_APPIDURI"];
-                var graphBase = _config["GRAPH_BASEURL"] ?? "https://graph.microsoft.com";
-                var scopes = _config["GRAPH_SCOPES"];
+                var tenantId        = _config["BACKEND_TENANTID"]        ?? string.Empty;
+                var backendClientId = _config["BACKEND_CLIENTID"]        ?? string.Empty;
+                var backendSecret   = _config["BACKEND_CLIENTSECRET"]    ?? string.Empty;
+                var authHost        = _config["CLOUD_AUTHORITYHOST"]     ?? "https://login.microsoftonline.com";
+                var expectedAud1    = _config["FRONTEND_CLIENTID"];   // optional
+                var expectedAud2    = _config["FRONTEND_APPIDURI"];   // optional
+                var graphBase       = _config["GRAPH_BASEURL"]           ?? "https://graph.microsoft.com";
+                var scopes          = _config["GRAPH_SCOPES"];
                 if (string.IsNullOrWhiteSpace(scopes)) scopes = graphBase.TrimEnd('/') + "/.default";
 
                 if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(backendClientId) || string.IsNullOrWhiteSpace(backendSecret))
@@ -74,13 +75,15 @@ namespace WPSecure.Api.Token
                     return res;
                 }
 
-                var valid = await ValidateUserTokenAsync(body.IdToken.Trim(), authHost, tenantId, expectedAud1, expectedAud2, _logger);
+                // Validate token (issuer derived from token itself; supports v1 & v2)
+                var valid = await ValidateUserTokenAsync(body.IdToken.Trim(), expectedAud1, expectedAud2, _logger);
                 if (!valid)
                 {
                     await res.WriteStringAsync(JsonSerializer.Serialize(new OboResult { Success = false, Error = "invalid_token" }, _json));
                     return res;
                 }
 
+                // OBO to Graph
                 var authority = authHost.TrimEnd('/') + "/" + tenantId;
                 var cca = ConfidentialClientApplicationBuilder
                     .Create(backendClientId)
@@ -107,7 +110,7 @@ namespace WPSecure.Api.Token
                 await res.WriteStringAsync(JsonSerializer.Serialize(new OboResult { Success = false, Error = "invalid_json" }, _json));
                 return res;
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 _logger.LogError(ex, "token-obo: internal_error");
                 await res.WriteStringAsync(JsonSerializer.Serialize(new OboResult { Success = false, Error = "internal_error" }, _json));
@@ -115,17 +118,31 @@ namespace WPSecure.Api.Token
             }
         }
 
-        private static async Task<bool> ValidateUserTokenAsync(string rawToken, string authorityHost, string tenantId, string? expectedAud1, string? expectedAud2, ILogger logger)
+        // IMPORTANT: Validate against the token's own issuer (supports v1 and v2 tokens)
+        private static async Task<bool> ValidateUserTokenAsync(string rawToken, string? expectedAud1, string? expectedAud2, ILogger logger)
         {
             try
             {
-                var issuer = authorityHost.TrimEnd('/') + "/" + tenantId + "/v2.0";
-                var metadata = issuer + "/.well-known/openid-configuration";
-                var cfgMgr = _cm.GetOrAdd(metadata, m => new ConfigurationManager<OpenIdConnectConfiguration>(m, new OpenIdConnectConfigurationRetriever(), new HttpDocumentRetriever { RequireHttps = true }));
+                var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+                var jwt = handler.ReadJwtToken(rawToken);
+                var issuer = jwt.Issuer; // e.g., https://sts.windows.net/<tid>/  OR  https://login.microsoftonline.com/<tid>/v2.0
+
+                // Build metadata endpoint from issuer
+                var baseIssuer = issuer.EndsWith("/", StringComparison.Ordinal) ? issuer : issuer + "/";
+                var metadata = baseIssuer + ".well-known/openid-configuration";
+
+                var cfgMgr = _cm.GetOrAdd(metadata, m =>
+                    new ConfigurationManager<OpenIdConnectConfiguration>(
+                        m,
+                        new OpenIdConnectConfigurationRetriever(),
+                        new HttpDocumentRetriever { RequireHttps = true }));
+
                 var cfg = await cfgMgr.GetConfigurationAsync(default);
-                var audiences = new System.Collections.Generic.List<string>();
+
+                var audiences = new List<string>();
                 if (!string.IsNullOrWhiteSpace(expectedAud1)) audiences.Add(expectedAud1!);
                 if (!string.IsNullOrWhiteSpace(expectedAud2)) audiences.Add(expectedAud2!);
+
                 var tvp = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
@@ -133,17 +150,17 @@ namespace WPSecure.Api.Token
                     ValidateIssuerSigningKey = true,
                     IssuerSigningKeys = cfg.SigningKeys,
                     ValidateLifetime = true,
-                    ClockSkew = System.TimeSpan.FromMinutes(2),
+                    ClockSkew = TimeSpan.FromMinutes(2),
                     ValidateAudience = audiences.Count > 0,
                     ValidAudiences = audiences.Count > 0 ? audiences : null
                 };
-                var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+
                 handler.ValidateToken(rawToken, tvp, out _);
                 return true;
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
-                logger.LogError(ex, "token-obo: token_validation_failed");
+                logger.LogError(ex, "token_validation_failed");
                 return false;
             }
         }
