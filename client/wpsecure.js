@@ -1,5 +1,5 @@
 /* WPSecure Outlook Add-in Runtime — SSO+OBO Silent Cache Edition
- * Build: 2026-03-01T00:00Z (Msg HTML unchanged; TXT: default-aware + reply cleanup; NEW TXT button = non-destructive; Appt HTML safe merge; Retry policy N)
+ * Build: 2026-03-01T00:00Z (Msg HTML unchanged; TXT: default-aware + reply cleanup; NEW TXT button non-destructive; 3-line spacer before all signatures; Appt HTML safe merge; Retry policy N)
  * Policy:
  * - Silent UX (no toasts). Console logs only (no PII, no tokens).
  * - Cache-only insertion on button/event; do nothing if cache miss.
@@ -165,6 +165,13 @@
     return { removed, prefixLen: p, normBefore:b, normAfter:a };
   }
 
+  // Ensure exactly N leading blank lines before a signature block in TEXT
+  function withLeadingBlankLines(sig, n){
+    const prefix = '\n'.repeat(Math.max(0,n|0));
+    // Avoid doubling if sig already begins with lots of newlines
+    return (sig.replace(/^\n+/, '')) ? (prefix + sig.replace(/^\n+/, '')) : (prefix + sig);
+  }
+
   // Cleanup for reply: remove all text between the inserted reply signature and two blank lines before first 'From:' header
   function cleanupReplyBetweenSignatureAndHeader(fullBody, sigContent){
     const t = normalizeWeirdText(fullBody);
@@ -207,13 +214,16 @@
           const current = await getBodyHtml();
           const wrapperStart = '<div data-wpsecure="sig-appt">';
           const wrapperEnd   = '</div>';
+          // 3-line spacer for HTML appointment
+          const spacer = '<div><br></div><div><br></div><div><br></div>';
           const wrappedSig   = `${wrapperStart}${content}${wrapperEnd}`;
           let nextHtml;
           if (current && current.indexOf(wrapperStart) >= 0) {
             const re = new RegExp(`${wrapperStart}[\\s\\S]*?${wrapperEnd}`,'i');
             nextHtml = current.replace(re, wrappedSig);
+            // Ensure spacer exists immediately before our block
+            nextHtml = nextHtml.replace(wrappedSig, spacer + wrappedSig);
           } else {
-            const spacer = '<div><br></div>';
             nextHtml = (current || '') + spacer + wrappedSig;
           }
           try { await disableClientSignature(); } catch(_) {}
@@ -226,6 +236,7 @@
         try {
           if (Office.context.mailbox.item.body.setSignatureAsync) {
             disableClientSignature().then(()=>{
+              // For message HTML we keep platform replace semantics; do not add spacer to avoid layout surprises
               Office.context.mailbox.item.body.setSignatureAsync(content, opts, r => {
                 resolve(r.status === Office.AsyncResultStatus.Succeeded);
               });
@@ -259,22 +270,25 @@
         baseline = baseline.replace(prev, '');
       }
 
+      // Always ensure a 3-line spacer before the signature
+      const sigWithSpacer = withLeadingBlankLines(content, 3);
+
       let nextBody;
       if (scenario === 'reply') {
-        // Prepend reply signature then collapse to header
-        const pre = content + (baseline ? "\n\n" + baseline : '');
-        nextBody = cleanupReplyBetweenSignatureAndHeader(pre, content);
+        // Prepend reply signature (with 3-line spacer) then collapse to header
+        const pre = sigWithSpacer + (baseline ? "\n\n" + baseline : '');
+        nextBody = cleanupReplyBetweenSignatureAndHeader(pre, sigWithSpacer);
       } else {
         // NEW scenario
         if (contextKind === 'event') {
           // Event: destructive top-only per requirement
-          nextBody = "\n\n" + content;
+          nextBody = sigWithSpacer; // top only, already has 3-line spacer
         } else {
-          // Button: non-destructive. If user has typed (any non-whitespace), append signature; else top-only
+          // Button: non-destructive. If user has typed, append; else top-only
           if (/\S/.test(baseline)) {
-            nextBody = baseline + "\n\n" + content;
+            nextBody = baseline + sigWithSpacer; // append with spacer built-in
           } else {
-            nextBody = "\n\n" + content;
+            nextBody = sigWithSpacer; // empty body → top-only with spacer
           }
         }
       }
