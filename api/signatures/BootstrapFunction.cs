@@ -54,8 +54,8 @@ namespace WPSecure.Api.Signatures
         private const string PATH_REPLY_HTML    = SIGNATURE_ROOT + "/wpsecure_cloud_reply.htm";
         private const string PATH_NEW_TEXT      = SIGNATURE_ROOT + "/wpsecure_cloud_new.txt";
         private const string PATH_REPLY_TEXT    = SIGNATURE_ROOT + "/wpsecure_cloud_reply.txt";
-        private const string PATH_APPT_NEW_HTML = ""; // optional
-        private const string PATH_APPT_NEW_TEXT = ""; // optional
+        private const string PATH_APPT_NEW_HTML = SIGNATURE_ROOT + "/wpsecure_cloud_new.htm";
+        private const string PATH_APPT_NEW_TEXT = SIGNATURE_ROOT + "/wpsecure_cloud_new.txt";
 
         public BootstrapFunction(ILogger<BootstrapFunction> logger, IConfiguration config, IHttpClientFactory http)
         {
