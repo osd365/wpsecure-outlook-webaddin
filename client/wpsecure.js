@@ -1,9 +1,11 @@
 /* WPSecure Outlook Add-in Runtime — SSO+OBO Silent Cache Edition
- * Build: 2026-03-01T00:00Z (Msg HTML unchanged; TXT: default-aware + reply cleanup; NEW TXT button non-destructive; 3-line spacer before all signatures; Appt HTML safe merge; Retry policy N)
- * Policy:
- * - Silent UX (no toasts). Console logs only (no PII, no tokens).
- * - Cache-only insertion on button/event; do nothing if cache miss.
- * - Bootstrap once per session: fetch up to 4 templates via backend (OBO), cache non-null.
+ * Build: 2026-03-01T00:00Z
+ * Changes in this build:
+ * - TXT (button, New & Reply): insert at CURSOR using setSelectedDataAsync (non-destructive). If body is empty, add 3 leading newlines; otherwise none.
+ * - TXT (event): unchanged (default-aware + reply cleanup; New event remains top-only).
+ * - HTML (message, New & Reply): when body is effectively empty, inject a 3-line spacer *inside* the signature HTML (after <body> if present; otherwise prefix fragment); avoid placing <div> before <head>.
+ * - HTML (appointment): spacer kept (safe merge).
+ * - Retry policy: unchanged.
  */
 (function(){
   // ---------------- Logger ----------------
@@ -50,12 +52,12 @@
   let log = ()=>{};
   function sessionId(){ try{ return (Office && Office.context && Office.context.sessionId) || 'global'; }catch{ return 'global'; } }
   function userFrag(){ try{ const up=Office.context.mailbox.userProfile; return (up && up.emailAddress || 'user').replace(/[^a-z0-9]/gi,'').slice(0,10) || 'user'; }catch{ return 'user'; } }
-  function makeKey(kind, fmt, scenario){ // kind: 'message' | 'appointment'; fmt: 'HTML'|'txt'; scenario: 'new'|'reply'
+  function makeKey(kind, fmt, scenario){
     const u = userFrag(); const s = sessionId();
     if(kind==='appointment') return `wpsecure_sig_${u}_${s}_appointment_${fmt}_new`;
     return `wpsecure_sig_${u}_${s}_message_${fmt}_${scenario}`;
   }
-  function cacheSet(k,v){ try{ localStorage.setItem(k,v); }catch(_){ /* ignore */ } }
+  function cacheSet(k,v){ try{ localStorage.setItem(k,v); }catch(_){ } }
   function cacheGet(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }
   function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
@@ -87,115 +89,65 @@
   // ---------------- Signature Helpers ----------------
   function disableClientSignature() {
     return new Promise(resolve => {
-      try { Office.context.mailbox.item.body.disableClientSignatureAsync(() => resolve()); }
-      catch(_) { resolve(); }
+      try { Office.context.mailbox.item.body.disableClientSignatureAsync(() => resolve()); } catch(_) { resolve(); }
     });
   }
   function getBodyText() {
     return new Promise(resolve => {
-      try {
-        Office.context.mailbox.item.body.getAsync(Office.CoercionType.Text, ar => {
-          if (ar.status === Office.AsyncResultStatus.Succeeded) resolve(ar.value || '');
-          else resolve('');
-        });
-      } catch(_) { resolve(''); }
+      try { Office.context.mailbox.item.body.getAsync(Office.CoercionType.Text, ar => { resolve(ar.status === Office.AsyncResultStatus.Succeeded ? (ar.value||'') : ''); }); } catch(_) { resolve(''); }
     });
   }
   function setBodyText(text) {
     return new Promise(resolve => {
-      try {
-        Office.context.mailbox.item.body.setAsync(text, { coercionType: Office.CoercionType.Text }, r => {
-          resolve(r.status === Office.AsyncResultStatus.Succeeded);
-        });
-      } catch(_) { resolve(false); }
+      try { Office.context.mailbox.item.body.setAsync(text, { coercionType: Office.CoercionType.Text }, r => { resolve(r.status === Office.AsyncResultStatus.Succeeded); }); } catch(_) { resolve(false); }
     });
   }
   function getBodyHtml() {
     return new Promise(resolve => {
-      try {
-        Office.context.mailbox.item.body.getAsync(Office.CoercionType.Html, ar => {
-          if (ar.status === Office.AsyncResultStatus.Succeeded) resolve(ar.value || '');
-          else resolve('');
-        });
-      } catch(_) { resolve(''); }
+      try { Office.context.mailbox.item.body.getAsync(Office.CoercionType.Html, ar => { resolve(ar.status === Office.AsyncResultStatus.Succeeded ? (ar.value||'') : ''); }); } catch(_) { resolve(''); }
     });
   }
   function setBodyHtml(html) {
     return new Promise(resolve => {
-      try {
-        Office.context.mailbox.item.body.setAsync(html, { coercionType: Office.CoercionType.Html }, r => {
-          resolve(r.status === Office.AsyncResultStatus.Succeeded);
-        });
-      } catch(_) { resolve(false); }
+      try { Office.context.mailbox.item.body.setAsync(html, { coercionType: Office.CoercionType.Html }, r => { resolve(r.status === Office.AsyncResultStatus.Succeeded); }); } catch(_) { resolve(false); }
     });
   }
 
-  // sessionData for previous TXT signature
+  // sessionData for previous TXT signature (used only in event flows now)
   function getSessionTextSig(){
     return new Promise(resolve => {
-      try {
-        Office.context.mailbox.item.sessionData.getAsync('wpsecure_txt_sig', ar => {
-          resolve(ar.status === Office.AsyncResultStatus.Succeeded ? (ar.value || '') : '');
-        });
-      } catch(_) { resolve(''); }
+      try { Office.context.mailbox.item.sessionData.getAsync('wpsecure_txt_sig', ar => { resolve(ar.status === Office.AsyncResultStatus.Succeeded ? (ar.value||'') : ''); }); } catch(_) { resolve(''); }
     });
   }
   function setSessionTextSig(val){
     return new Promise(resolve => {
-      try { Office.context.mailbox.item.sessionData.setAsync('wpsecure_txt_sig', val || '', _ => resolve()); }
-      catch(_) { resolve(); }
+      try { Office.context.mailbox.item.sessionData.setAsync('wpsecure_txt_sig', val||'', _ => resolve()); } catch(_) { resolve(); }
     });
   }
 
-  // Normalize odd encodings (mis-decoded CR/LF, zero-widths)
-  function normalizeWeirdText(t){
-    if(!t) return '';
-    t = t.replace(/[\u0A0D\u0D0A]/g,'\n'); // normalize CR/LF-like runes to newline
-    t = t.replace(/[\u200B-\u200D\uFEFF]/g,''); // strip zero-width/BOM
-    return t;
-  }
+  // Normalize odd encodings in TEXT
+  function normalizeWeirdText(t){ if(!t) return ''; t = t.replace(/[\u0A0D\u0D0A]/g,'\n'); t = t.replace(/[\u200B-\u200D\uFEFF]/g,''); return t; }
+  function diffRemoved(before, after){ const b=normalizeWeirdText(before), a=normalizeWeirdText(after); const bl=b.length, al=a.length; let p=0; while(p<bl&&p<al&&b.charCodeAt(p)===a.charCodeAt(p)) p++; let s=0; while(s<bl-p&&s<al-p&&b.charCodeAt(bl-1-s)===a.charCodeAt(al-1-s)) s++; const removed=b.slice(p, bl-s); return { removed, prefixLen:p, normBefore:b, normAfter:a }; }
 
-  // Compute removed segment by prefix/suffix match
-  function diffRemoved(before, after){
-    const b = normalizeWeirdText(before), a = normalizeWeirdText(after);
-    const bl = b.length, al = a.length;
-    let p=0; while(p<bl && p<al && b.charCodeAt(p)===a.charCodeAt(p)) p++;
-    let s=0; while(s<bl-p && s<al-p && b.charCodeAt(bl-1-s)===a.charCodeAt(al-1-s)) s++;
-    const removed = b.slice(p, bl - s);
-    return { removed, prefixLen: p, normBefore:b, normAfter:a };
-  }
-
-  // Ensure exactly N leading blank lines before a signature block in TEXT
-  function withLeadingBlankLines(sig, n){
-    const prefix = '\n'.repeat(Math.max(0,n|0));
-    // Avoid doubling if sig already begins with lots of newlines
-    return (sig.replace(/^\n+/, '')) ? (prefix + sig.replace(/^\n+/, '')) : (prefix + sig);
-  }
-
-  // Cleanup for reply: remove all text between the inserted reply signature and two blank lines before first 'From:' header
-  function cleanupReplyBetweenSignatureAndHeader(fullBody, sigContent){
-    const t = normalizeWeirdText(fullBody);
-    const sigIdx = t.indexOf(sigContent);
-    if (sigIdx < 0) return fullBody;
-    const afterSigIdx = sigIdx + sigContent.length;
-    const remainder = t.slice(afterSigIdx);
-
-    const headerFromMatch = /(^|\n)From\s*:\s*.*$/mi.exec(remainder);
-    if (!headerFromMatch) return fullBody;
-
-    const hdrStartInRemainder = headerFromMatch.index + (headerFromMatch[1] ? headerFromMatch[1].length : 0);
-    const hdrAbsPos = afterSigIdx + hdrStartInRemainder;
-    const keepBeforeHeader = t.slice(0, afterSigIdx).replace(/\s*$/, '');
-    const headerOnwards = t.slice(hdrAbsPos);
-    const cleaned = keepBeforeHeader + "\n\n" + headerOnwards;
-    return cleaned;
+  // --- HTML spacer application for MESSAGE signatures ---
+  function applyHtmlSpacerIfEmptyBody(sigHtml, currentBodyHtml){
+    const textOnly = (currentBodyHtml||'').replace(/<style[\s\S]*?<\/style>/gi,'').replace(/<script[\s\S]*?<\/script>/gi,'').replace(/<[^>]+>/g,'').trim();
+    if(textOnly.length>0) return sigHtml; // body has content → no spacer
+    const spacer = '<div><br></div><div><br></div><div><br></div>';
+    const lower = sigHtml.trim().toLowerCase();
+    if(lower.startsWith('<!doctype') || lower.startsWith('<html') || lower.startsWith('<head') || lower.includes('<body')){
+      // try to inject right after <body>
+      return sigHtml.replace(/<body[^>]*>/i, m => m + spacer);
+    }
+    // treat as fragment
+    return spacer + sigHtml;
   }
 
   // ---------------- Retry bootstrap until cached ----------------
   async function retryBootstrapUntilCached(kind, fmt, scenario, attempts, delayMs){
     const key = makeKey(kind, fmt, scenario);
     let payload = cacheGet(key);
-    for(let i=0; i<attempts && !payload; i++){
+    for(let i=0;i<attempts && !payload;i++){
       await bootstrapSignaturesSilently();
       payload = cacheGet(key);
       if(!payload && delayMs>0) await sleep(delayMs);
@@ -203,143 +155,124 @@
     return payload;
   }
 
-  // ---------------- Insertion (msg HTML unchanged; TXT smart; appt HTML safe merge) ----------------
+  // ---------------- Insertion (message HTML: replace; appt HTML safe merge; TEXT: event vs button) ----------------
   async function insertSignature(content, fmt, scenario, contextKind){
     const isMessage = (function(){ try{ return Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message; }catch(_){ return true; } })();
     const isAppointment = !isMessage;
 
-    if (fmt === 'HTML') {
-      if (isAppointment) {
-        try {
+    if(fmt==='HTML'){
+      if(isAppointment){
+        try{
           const current = await getBodyHtml();
           const wrapperStart = '<div data-wpsecure="sig-appt">';
-          const wrapperEnd   = '</div>';
-          // 3-line spacer for HTML appointment
+          const wrapperEnd = '</div>';
           const spacer = '<div><br></div><div><br></div><div><br></div>';
-          const wrappedSig   = `${wrapperStart}${content}${wrapperEnd}`;
+          const wrapped = `${wrapperStart}${content}${wrapperEnd}`;
           let nextHtml;
-          if (current && current.indexOf(wrapperStart) >= 0) {
+          if(current && current.indexOf(wrapperStart)>=0){
             const re = new RegExp(`${wrapperStart}[\\s\\S]*?${wrapperEnd}`,'i');
-            nextHtml = current.replace(re, wrappedSig);
-            // Ensure spacer exists immediately before our block
-            nextHtml = nextHtml.replace(wrappedSig, spacer + wrappedSig);
+            nextHtml = current.replace(re, wrapped);
+            nextHtml = nextHtml.replace(wrapped, spacer + wrapped);
           } else {
-            nextHtml = (current || '') + spacer + wrappedSig;
+            nextHtml = (current||'') + spacer + wrapped;
           }
-          try { await disableClientSignature(); } catch(_) {}
-          const ok = await setBodyHtml(nextHtml);
-          return ok;
-        } catch(_) { return false; }
+          try{ await disableClientSignature(); }catch(_){ }
+          return await setBodyHtml(nextHtml);
+        }catch(_){ return false; }
       }
-      return new Promise(resolve => {
-        const opts = { coercionType: Office.CoercionType.Html };
-        try {
-          if (Office.context.mailbox.item.body.setSignatureAsync) {
-            disableClientSignature().then(()=>{
-              // For message HTML we keep platform replace semantics; do not add spacer to avoid layout surprises
-              Office.context.mailbox.item.body.setSignatureAsync(content, opts, r => {
-                resolve(r.status === Office.AsyncResultStatus.Succeeded);
+      // MESSAGE HTML: possibly apply spacer inside signature when body empty
+      try{
+        const currentHtml = await getBodyHtml();
+        const sigMaybeSpaced = applyHtmlSpacerIfEmptyBody(content, currentHtml);
+        // We only disable default when actually inserting
+        return await new Promise(resolve=>{
+          const opts = { coercionType: Office.CoercionType.Html };
+          try{
+            if(Office.context.mailbox.item.body.setSignatureAsync){
+              disableClientSignature().then(()=>{
+                Office.context.mailbox.item.body.setSignatureAsync(sigMaybeSpaced, opts, r=> resolve(r.status===Office.AsyncResultStatus.Succeeded));
+              }).catch(()=>{
+                Office.context.mailbox.item.body.setSignatureAsync(sigMaybeSpaced, opts, r=> resolve(r.status===Office.AsyncResultStatus.Succeeded));
               });
-            }).catch(()=>{
-              Office.context.mailbox.item.body.setSignatureAsync(content, opts, r => {
-                resolve(r.status === Office.AsyncResultStatus.Succeeded);
-              });
-            });
-          } else { resolve(false); }
-        } catch(_) { resolve(false); }
+            } else { resolve(false); }
+          }catch(_){ resolve(false); }
+        });
+      }catch(_){ return false; }
+    }
+
+    // TEXT path
+    if(contextKind==='button'){
+      // Non-destructive: insert at cursor using setSelectedDataAsync.
+      // If the WHOLE body is empty, prefix with 3 newlines; otherwise no space.
+      const bodyNow = normalizeWeirdText(await getBodyText());
+      const prefix = bodyNow.trim().length===0 ? '\n\n\n' : '';
+      return await new Promise(resolve=>{
+        try{
+          Office.context.mailbox.item.body.setSelectedDataAsync(prefix + content, { coercionType: Office.CoercionType.Text }, res => {
+            resolve(res.status===Office.AsyncResultStatus.Succeeded);
+          });
+        }catch(_){ resolve(false); }
       });
     }
 
-    // TEXT path (smart):
-    try {
+    // Event flows (existing behavior): default-aware for NEW; reply cleanup
+    try{
       const beforeRaw = await getBodyText();
       const before = normalizeWeirdText(beforeRaw);
-      try { await disableClientSignature(); } catch(_) {}
+      try{ await disableClientSignature(); }catch(_){ }
       const afterRaw = await getBodyText();
       const after = normalizeWeirdText(afterRaw);
-
       const { removed, prefixLen, normBefore, normAfter } = diffRemoved(before, after);
       const prefixHasText = /\S/.test(normBefore.slice(0, prefixLen));
 
-      // Start from the post-disable baseline (default removed if any)
       let baseline = normAfter;
-
-      // Always remove prior WPSecure text first (idempotence)
       const prev = await getSessionTextSig();
-      if (prev && baseline && baseline.indexOf(prev) >= 0) {
-        baseline = baseline.replace(prev, '');
-      }
-
-      // Always ensure a 3-line spacer before the signature
-      const sigWithSpacer = withLeadingBlankLines(content, 3);
+      if(prev && baseline && baseline.indexOf(prev)>=0){ baseline = baseline.replace(prev,''); }
 
       let nextBody;
-      if (scenario === 'reply') {
-        // Prepend reply signature (with 3-line spacer) then collapse to header
-        const pre = sigWithSpacer + (baseline ? "\n\n" + baseline : '');
-        nextBody = cleanupReplyBetweenSignatureAndHeader(pre, sigWithSpacer);
+      if(scenario==='reply'){
+        // Prepend signature then collapse down to header
+        const pre = content + (baseline ? "\n\n" + baseline : '');
+        // minimal cleanup: remove everything up to first From: after our sig
+        const t = pre; const sigIdx = t.indexOf(content); const rest = t.slice(sigIdx+content.length);
+        const m = /(\n|^)From\s*:\s*.*$/mi.exec(rest);
+        if(m){ const hdrPos = sigIdx+content.length + m.index + (m[1]?m[1].length:0); nextBody = t.slice(0, sigIdx+content.length).replace(/\s*$/, '') + "\n\n" + t.slice(hdrPos); }
+        else { nextBody = pre; }
       } else {
-        // NEW scenario
-        if (contextKind === 'event') {
-          // Event: destructive top-only per requirement
-          nextBody = sigWithSpacer; // top only, already has 3-line spacer
-        } else {
-          // Button: non-destructive. If user has typed, append; else top-only
-          if (/\S/.test(baseline)) {
-            nextBody = baseline + sigWithSpacer; // append with spacer built-in
-          } else {
-            nextBody = sigWithSpacer; // empty body → top-only with spacer
-          }
-        }
+        // NEW event: top-only
+        nextBody = "\n\n\n" + content;
       }
-
       const ok = await setBodyText(nextBody);
-      if (ok) await setSessionTextSig(content);
+      if(ok) await setSessionTextSig(content);
       return ok;
-    } catch(_) { return false; }
+    }catch(_){ return false; }
   }
 
   // ---------------- SSO + Bootstrap (silent) ----------------
-  async function getSsoIdTokenSilent(){
-    try{ return await Office.auth.getAccessToken({ allowSignInPrompt:false, allowConsentPrompt:false }); }
-    catch(_){ return null; }
-  }
+  async function getSsoIdTokenSilent(){ try{ return await Office.auth.getAccessToken({ allowSignInPrompt:false, allowConsentPrompt:false }); }catch(_){ return null; } }
   async function bootstrapSignaturesSilently(){
     try{
       log('info','bootstrap:start');
-      const url = computeBootstrapUrl();
-      if(!url){ log('warn','bootstrap:missing-endpoint'); return; }
-      const idTok = await getSsoIdTokenSilent();
-      if(!idTok){ log('warn','bootstrap:no-idtoken'); return; }
-      const res = await fetch(url, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ id_token: idTok })
-      });
-      if(!res.ok){ log('error','bootstrap:http', { status: res.status }); return; }
+      const url = computeBootstrapUrl(); if(!url){ log('warn','bootstrap:missing-endpoint'); return; }
+      const idTok = await getSsoIdTokenSilent(); if(!idTok){ log('warn','bootstrap:no-idtoken'); return; }
+      const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id_token:idTok }) });
+      if(!res.ok){ log('error','bootstrap:http',{status:res.status}); return; }
       const payload = await res.json();
-      const files = (payload && payload.files) || {};
+      const files = (payload&&payload.files)||{};
       if(files.newHtml) cacheSet(makeKey('message','HTML','new'), files.newHtml);
-      if(files.replyHtml)cacheSet(makeKey('message','HTML','reply'), files.replyHtml);
+      if(files.replyHtml) cacheSet(makeKey('message','HTML','reply'), files.replyHtml);
       if(files.newText) cacheSet(makeKey('message','txt','new'), files.newText);
-      if(files.replyText)cacheSet(makeKey('message','txt','reply'), files.replyText);
+      if(files.replyText) cacheSet(makeKey('message','txt','reply'), files.replyText);
       if(files.apptNewHtml) cacheSet(makeKey('appointment','HTML','new'), files.apptNewHtml);
       if(files.apptNewText) cacheSet(makeKey('appointment','txt','new'), files.apptNewText);
-      log('info','bootstrap:files', {
-        newHtml: !!files.newHtml, replyHtml: !!files.replyHtml,
-        newText: !!files.newText, replyText: !!files.replyText,
-        apptNewHtml: !!files.apptNewHtml, apptNewText: !!files.apptNewText
-      });
     }catch(_){ log('error','bootstrap:error'); }
   }
 
-  // ---------------- Insertion Orchestrator (cache-first with retry) ----------------
+  // ---------------- Orchestrator ----------------
   async function doInsertCurrentContext(maxAttempts, contextKind){
-    const itemType = (function(){ try{
-      return Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message ? 'message' : 'appointment';
-    }catch(_){ return 'message'; } })();
+    const itemType = (function(){ try{ return Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message ? 'message':'appointment'; }catch(_){ return 'message'; } })();
     const fmt = await getBodyFormat();
     const scenario = itemType==='message' ? await getComposeScenario() : 'new';
-    log('info','insert:scenario', { item:itemType, fmt, compose:scenario, ctx:contextKind });
 
     const key = makeKey(itemType, fmt, scenario);
     let payload = cacheGet(key);
@@ -348,55 +281,21 @@
       const attempts = Math.max(0, maxAttempts|0);
       payload = await retryBootstrapUntilCached(itemType, fmt, scenario, attempts, 250);
       if(!payload && itemType==='appointment'){
-        const fallbackKey = makeKey('message', fmt, 'new');
-        payload = cacheGet(fallbackKey) || await retryBootstrapUntilCached('message', fmt, 'new', attempts, 250);
-        if (payload) log('info','insert:appt-fallback', { from: key, to: fallbackKey });
+        const fb = makeKey('message', fmt, 'new');
+        payload = cacheGet(fb) || await retryBootstrapUntilCached('message', fmt, 'new', attempts, 250);
       }
     }
 
-    if(!payload){ log('warn','insert:cache-miss', { key }); return false; }
-    const ok = await insertSignature(payload, fmt, scenario, contextKind);
-    log('info', ok ? 'insert:done' : 'insert:failed');
-    return ok;
+    if(!payload) return false;
+    return await insertSignature(payload, fmt, scenario, contextKind);
   }
 
-  // ---------------- Event & Button handlers ----------------
-  const RETRY_EVENT = 2, RETRY_BUTTON = 3;
-  let __eventInsertedOnce = false;
-  async function onMessageCompose(event){
-    try{
-      await Office.onReady();
-      if(!__eventInsertedOnce){
-        __eventInsertedOnce = true;
-        await doInsertCurrentContext(RETRY_EVENT, 'event');
-      } else { log('debug','event:skipped-second-run'); }
-    } catch(_) { }
-    finally { try{ event && event.completed && event.completed(); }catch(_){} }
-  }
-  async function onReinsert(event){
-    try{ await Office.onReady(); await doInsertCurrentContext(RETRY_BUTTON, 'button'); }
-    catch(_){ }
-    finally{ try{ event && event.completed && event.completed(); }catch(_){} }
-  }
+  // ---------------- Handlers ----------------
+  const RETRY_EVENT=2, RETRY_BUTTON=3;
+  let __eventInsertedOnce=false;
+  async function onMessageCompose(event){ try{ await Office.onReady(); if(!__eventInsertedOnce){ __eventInsertedOnce=true; await doInsertCurrentContext(RETRY_EVENT,'event'); } } finally { try{event&&event.completed&&event.completed();}catch(_){}} }
+  async function onReinsert(event){ try{ await Office.onReady(); await doInsertCurrentContext(RETRY_BUTTON,'button'); } finally { try{event&&event.completed&&event.completed();}catch(_){}} }
 
-  // ---------------- Bootstrap & wire-up ----------------
-  (async function bootstrap(){
-    await loadMinimalConfig();
-    log = mkLogger('info');
-    try{ await Office.onReady(); }catch(_){ }
-    bootstrapSignaturesSilently();
-    try{
-      Office.actions && Office.actions.associate && (
-        Office.actions.associate('WPSecure_OnMessageCompose', onMessageCompose),
-        Office.actions.associate('WPSecure_Reinsert', onReinsert)
-      );
-      log('info','wireup:associated');
-    }catch(_){ log('warn','wireup:failed'); }
-  })();
-
-  // Optional debug surface (no secrets)
-  window.WPSecure_Debug = {
-    hasConfig: () => !!CONFIG.BACKEND_OBO_ENDPOINT || !!CONFIG.BACKEND_BOOTSTRAP_ENDPOINT,
-    cacheKeys: () => Object.keys(localStorage).filter(k=>k.startsWith('wpsecure_sig_'))
-  };
+  // ---------------- Bootstrap ----------------
+  (async function(){ await loadMinimalConfig(); log = mkLogger('info'); try{ await Office.onReady(); }catch(_){ } bootstrapSignaturesSilently(); try{ Office.actions&&Office.actions.associate&& ( Office.actions.associate('WPSecure_OnMessageCompose', onMessageCompose), Office.actions.associate('WPSecure_Reinsert', onReinsert) ); }catch(_){ } })();
 })();
