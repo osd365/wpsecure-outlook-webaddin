@@ -1,5 +1,5 @@
 /* WPSecure Outlook Add-in Runtime — SSO+OBO Silent Cache Edition
- * Build: 2026-03-01T00:00Z (Msg HTML unchanged; TXT: no markers + default-removal guard; Reply TXT prepends; Appt HTML safe merge)
+ * Build: 2026-03-01T00:00Z (Msg HTML unchanged; TXT: default-aware + no markers; Reply TXT prepends; Appt HTML safe merge; Retry policy N)
  * Policy:
  * - Silent UX (no toasts). Console logs only (no PII, no tokens).
  * - Cache-only insertion on button/event; do nothing if cache miss.
@@ -57,6 +57,8 @@
   }
   function cacheSet(k,v){ try{ localStorage.setItem(k,v); }catch(_){ /* ignore */ } }
   function cacheGet(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }
+  function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
   function getBodyFormat(){
     return new Promise(resolve=>{
       try{
@@ -145,24 +147,45 @@
     });
   }
 
+  // Normalize odd encodings (e.g., CR/LF mis-decoded to Indic blocks); strip ZW chars
+  function normalizeWeirdText(t){
+    if(!t) return '';
+    // Replace common mis-decoded CR/LF runes with real newlines
+    t = t.replace(/[\u0A0D\u0D0A]/g,'\n');
+    // Remove zero-width / BOM
+    t = t.replace(/[\u200B-\u200D\uFEFF]/g,'');
+    return t;
+  }
+
   // Compute removed segment by prefix/suffix match
   function diffRemoved(before, after){
-    const bl = before.length, al = after.length;
-    let p=0; while(p<bl && p<al && before.charCodeAt(p)===after.charCodeAt(p)) p++;
-    let s=0; while(s<bl-p && s<al-p && before.charCodeAt(bl-1-s)===after.charCodeAt(al-1-s)) s++;
-    const removed = before.slice(p, bl - s);
-    return { removed, prefixLen: p };
+    const b = normalizeWeirdText(before), a = normalizeWeirdText(after);
+    const bl = b.length, al = a.length;
+    let p=0; while(p<bl && p<al && b.charCodeAt(p)===a.charCodeAt(p)) p++;
+    let s=0; while(s<bl-p && s<al-p && b.charCodeAt(bl-1-s)===a.charCodeAt(al-1-s)) s++;
+    const removed = b.slice(p, bl - s);
+    return { removed, prefixLen: p, normBefore:b, normAfter:a };
+  }
+
+  // ---------------- Retry bootstrap until cached ----------------
+  async function retryBootstrapUntilCached(kind, fmt, scenario, attempts, delayMs){
+    const key = makeKey(kind, fmt, scenario);
+    let payload = cacheGet(key);
+    for(let i=0; i<attempts && !payload; i++){
+      await bootstrapSignaturesSilently();
+      payload = cacheGet(key);
+      if(!payload && delayMs>0) await sleep(delayMs);
+    }
+    return payload;
   }
 
   // ---------------- Insertion (msg HTML unchanged; TXT smart; appt HTML safe merge) ----------------
   async function insertSignature(content, fmt, scenario){
-    // Determine item type inline
     const isMessage = (function(){ try{ return Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message; }catch(_){ return true; } })();
     const isAppointment = !isMessage;
 
     if (fmt === 'HTML') {
       if (isAppointment) {
-        // SAFE appointment HTML merge (never wipe, add spacer, replace our block only)
         try {
           const current = await getBodyHtml();
           const wrapperStart = '<div data-wpsecure="sig-appt">';
@@ -181,7 +204,6 @@
           return ok;
         } catch(_) { return false; }
       }
-      // Message HTML (unchanged): replace via setSignatureAsync
       return new Promise(resolve => {
         const opts = { coercionType: Office.CoercionType.Html };
         try {
@@ -200,40 +222,43 @@
       });
     }
 
-    // TEXT path (smart):
+    // TEXT path (smart default-aware):
     try {
-      // 1) Snapshot BEFORE disable (to detect default + typed text placement)
-      const before = await getBodyText();
-
-      // 2) Disable client signature (if present)
+      const beforeRaw = await getBodyText();
+      const before = normalizeWeirdText(beforeRaw);
+      // Disable client signature (if present)
       try { await disableClientSignature(); } catch(_) {}
+      const afterRaw = await getBodyText();
+      const after = normalizeWeirdText(afterRaw);
 
-      // 3) Snapshot AFTER disable
-      const after = await getBodyText();
-      const { removed, prefixLen } = diffRemoved(before, after);
-      const prefixHasText = /\S/.test(before.slice(0, prefixLen));
+      const { removed, prefixLen, normBefore, normAfter } = diffRemoved(before, after);
+      const prefixHasText = /\S/.test(normBefore.slice(0, prefixLen));
 
-      // If user has typed above the client default, DO NOT remove default or insert ours: restore and exit.
-      // (Your requirement: only remove default if there is no text on top.)
+      // If Outlook removed something but user had typed above it, restore and exit (do not insert)
       if (removed && removed.trim().length>0 && prefixHasText) {
-        await setBodyText(before); // restore as user had content above default
+        await setBodyText(beforeRaw); // restore exact original
         return false;
       }
 
-      // 4) Baseline = AFTER (client default removed if it existed)
+      // Baseline = after (client default removed if any)
       const prev = await getSessionTextSig();
-      let baseline = after;
+      let baseline = normAfter;
       if (prev && baseline && baseline.indexOf(prev) >= 0) {
-        baseline = baseline.replace(prev, ''); // idempotent removal of prior WPSecure text
+        baseline = baseline.replace(prev, ''); // remove prior WPSecure text
       }
 
-      // 5) Build next body based on scenario
+      // If disable removed nothing AND baseline looks like only-signature area and user hasn't typed,
+      // allow treating the top as default and clear it for NEW scenario.
+      if ((!removed || !removed.trim()) && scenario==='new'){
+        const hasAnyUserText = /\S/.test(baseline);
+        if (!hasAnyUserText) baseline = '';
+      }
+
+      // Build next body (reply at top, new at end)
       let nextBody;
       if (scenario === 'reply') {
-        // Prepend reply signature at the top of compose area
         nextBody = content + (baseline ? "\n\n" + baseline : '');
       } else {
-        // New: place at the end (if body had anything else left)
         nextBody = (baseline ? baseline + "\n\n" : '') + content;
       }
 
@@ -276,8 +301,8 @@
     }catch(_){ log('error','bootstrap:error'); }
   }
 
-  // ---------------- Insertion Orchestrator (cache-only) ----------------
-  async function doInsertCurrentContext(){
+  // ---------------- Insertion Orchestrator (cache-first with retry) ----------------
+  async function doInsertCurrentContext(maxAttempts){
     const itemType = (function(){ try{
       return Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message ? 'message' : 'appointment';
     }catch(_){ return 'message'; } })();
@@ -288,11 +313,15 @@
     const key = makeKey(itemType, fmt, scenario);
     let payload = cacheGet(key);
 
-    // Appointment fallback to message-new if appointment cache is empty
-    if(!payload && itemType === 'appointment') {
-      const fallbackKey = makeKey('message', fmt, 'new');
-      payload = cacheGet(fallbackKey);
-      if (payload) log('info','insert:appt-fallback', { from: key, to: fallbackKey });
+    if(!payload){
+      const attempts = Math.max(0, maxAttempts|0);
+      payload = await retryBootstrapUntilCached(itemType, fmt, scenario, attempts, 250);
+      if(!payload && itemType==='appointment'){
+        // appointment fallback
+        const fallbackKey = makeKey('message', fmt, 'new');
+        payload = cacheGet(fallbackKey) || await retryBootstrapUntilCached('message', fmt, 'new', attempts, 250);
+        if (payload) log('info','insert:appt-fallback', { from: key, to: fallbackKey });
+      }
     }
 
     if(!payload){ log('warn','insert:cache-miss', { key }); return false; }
@@ -302,19 +331,20 @@
   }
 
   // ---------------- Event & Button handlers ----------------
+  const RETRY_EVENT = 2, RETRY_BUTTON = 3;
   let __eventInsertedOnce = false;
   async function onMessageCompose(event){
     try{
       await Office.onReady();
       if(!__eventInsertedOnce){
         __eventInsertedOnce = true;
-        await doInsertCurrentContext();
+        await doInsertCurrentContext(RETRY_EVENT);
       } else { log('debug','event:skipped-second-run'); }
     } catch(_) { }
     finally { try{ event && event.completed && event.completed(); }catch(_){} }
   }
   async function onReinsert(event){
-    try{ await Office.onReady(); await doInsertCurrentContext(); }
+    try{ await Office.onReady(); await doInsertCurrentContext(RETRY_BUTTON); }
     catch(_){ }
     finally{ try{ event && event.completed && event.completed(); }catch(_){} }
   }
