@@ -1,4 +1,0 @@
-{
-  "BACKEND_OBO_ENDPOINT": "/api/token/obo",
-  "BACKEND_BOOTSTRAP_ENDPOINT": "/api/signatures/bootstrap"
-}
