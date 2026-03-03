@@ -4,7 +4,7 @@
 	<Version>70.14.03.2026</Version>
 	<ProviderName>OSD365 Limited</ProviderName>
 	<DefaultLocale>en-US</DefaultLocale>
-	<DisplayName DefaultValue="Insert Signature"/>
+	<DisplayName DefaultValue="Signature Updater"/>
 	<Description DefaultValue="Insert WPSecure cloud signature for Outlook."/>
 	<IconUrl DefaultValue="https://your-web-app-domain.azurewebsites.net/assets/icon-64.png"/>
 	<HighResolutionIconUrl DefaultValue="https://your-web-app-domain.azurewebsites.net/assets/icon-128.png"/>
@@ -17,7 +17,7 @@
 	</Hosts>
 	<Requirements>
 		<Sets>
-			<Set Name="Mailbox" MinVersion="1.5"/>
+			<Set Name="Mailbox" MinVersion="1.10"/>
 		</Sets>
 	</Requirements>
 	<FormSettings>
@@ -97,50 +97,11 @@
 						</ExtensionPoint>
 					</DesktopFormFactor>
 					<MobileFormFactor>
-						<FunctionFile resid="Commands.Url"/>
-						<ExtensionPoint xsi:type="MobileMessageComposeCommandSurface">
-							<Group id="MobileGroup">
-								<Label resid="GroupLabel" />
-								<Control xsi:type="MobileButton" id="MobileInsertSignatureButton">
-									<Label resid="ActionButton.Label" />
-									<Icon>
-										<bt:Image size="25" scale="1" resid="Icon.25x25.scale-100" />
-										<bt:Image size="25" scale="2" resid="Icon.25x25.scale-200" />
-										<bt:Image size="25" scale="3" resid="Icon.25x25.scale-300" />
-										<bt:Image size="32" scale="1" resid="Icon.32x32.scale-100" />
-										<bt:Image size="32" scale="2" resid="Icon.32x32.scale-200" />
-										<bt:Image size="32" scale="3" resid="Icon.32x32.scale-300" />
-										<bt:Image size="48" scale="1" resid="Icon.48x48.scale-100" />
-										<bt:Image size="48" scale="2" resid="Icon.48x48.scale-200" />
-										<bt:Image size="48" scale="3" resid="Icon.48x48.scale-300" />
-									</Icon>
-									<Action xsi:type="ExecuteFunction">
-										<FunctionName>WPSecure_Reinsert</FunctionName>
-									</Action>
-								</Control>
-							</Group>
-						</ExtensionPoint>
-						<ExtensionPoint xsi:type="MobileMessageReadCommandSurface">
-							<Group id="MobileReadGroup">
-								<Label resid="GroupLabel"/>
-								<Control xsi:type="MobileButton" id="MobileReadInsertSignatureButton">
-									<Label resid="ActionButton.Label"/>
-									<Icon>
-										<bt:Image size="25" scale="1" resid="Icon.25x25.scale-100" />
-										<bt:Image size="25" scale="2" resid="Icon.25x25.scale-200" />
-										<bt:Image size="25" scale="3" resid="Icon.25x25.scale-300" />
-										<bt:Image size="32" scale="1" resid="Icon.32x32.scale-100" />
-										<bt:Image size="32" scale="2" resid="Icon.32x32.scale-200" />
-										<bt:Image size="32" scale="3" resid="Icon.32x32.scale-300" />
-										<bt:Image size="48" scale="1" resid="Icon.48x48.scale-100" />
-										<bt:Image size="48" scale="2" resid="Icon.48x48.scale-200" />
-										<bt:Image size="48" scale="3" resid="Icon.48x48.scale-300" />
-									</Icon>
-									<Action xsi:type="ExecuteFunction">
-										<FunctionName>WPSecure_Reinsert</FunctionName>
-									</Action>
-								</Control>
-							</Group>
+						<ExtensionPoint xsi:type="LaunchEvent">
+							<LaunchEvents>
+								<LaunchEvent Type="OnNewMessageCompose" FunctionName="WPSecure_OnMessageCompose"/>
+							</LaunchEvents>
+							<SourceLocation resid="Commands.Url"/>
 						</ExtensionPoint>
 					</MobileFormFactor>
 				</Host>

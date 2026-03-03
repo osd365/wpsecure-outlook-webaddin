@@ -1,3 +1,4 @@
 {
-  "BACKEND_BASE_URL": "https://your-web-app-domain.azurewebsites.net"
+  "BACKEND_BASE_URL": "https://your-web-app-domain.azurewebsites.net",
+  "SIGNATURE_REFRESH_PERIOD_IN_MINUTES": 480
 }
