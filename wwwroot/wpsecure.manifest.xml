@@ -4,7 +4,7 @@
 	<Version>70.14.03.2026</Version>
 	<ProviderName>OSD365 Limited</ProviderName>
 	<DefaultLocale>en-US</DefaultLocale>
-	<DisplayName DefaultValue="Signature Updater"/>
+	<DisplayName DefaultValue="Signature Inserter"/>
 	<Description DefaultValue="Insert WPSecure cloud signature for Outlook."/>
 	<IconUrl DefaultValue="https://your-web-app-domain.azurewebsites.net/assets/icon-64.png"/>
 	<HighResolutionIconUrl DefaultValue="https://your-web-app-domain.azurewebsites.net/assets/icon-128.png"/>
