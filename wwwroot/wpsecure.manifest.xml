@@ -134,8 +134,8 @@
 				</bt:LongStrings>
 			</Resources>
 			<WebApplicationInfo>
-				<Id>f8de811a-1855-4ad7-b507-0015d6d67a8b</Id>
-				<Resource>api://your-web-app-domain.azurewebsites.net/f8de811a-1855-4ad7-b507-0015d6d67a8b</Resource>
+				<Id>f9de811a-1855-4ad7-b618-1126d6d87b8c</Id>
+				<Resource>api://your-web-app-domain.azurewebsites.net/f9de811a-1855-4ad7-b618-1126d6d87b8c</Resource>
 				<Scopes>
 					<Scope>openid</Scope>
 					<Scope>profile</Scope>
