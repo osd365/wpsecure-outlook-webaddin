@@ -60,8 +60,9 @@
 											<bt:Image size="32" resid="Icon.32x32"/>
 											<bt:Image size="80" resid="Icon.80x80"/>
 										</Icon>
-										<Action xsi:type="ExecuteFunction">
-											<FunctionName>WPSecure_Reinsert</FunctionName>
+										<Action xsi:type="ShowTaskpane">
+											<SourceLocation resid="Taskpane.Url"/>
+											<SupportsPinning>false</SupportsPinning>
 										</Action>
 									</Control>
 								</Group>
@@ -82,8 +83,9 @@
 											<bt:Image size="32" resid="Icon.32x32"/>
 											<bt:Image size="80" resid="Icon.80x80"/>
 										</Icon>
-										<Action xsi:type="ExecuteFunction">
-											<FunctionName>WPSecure_Reinsert</FunctionName>
+										<Action xsi:type="ShowTaskpane">
+											<SourceLocation resid="Taskpane.Url"/>
+											<SupportsPinning>false</SupportsPinning>
 										</Action>
 									</Control>
 								</Group>
@@ -96,14 +98,6 @@
 							<SourceLocation resid="Commands.Url"/>
 						</ExtensionPoint>
 					</DesktopFormFactor>
-					<MobileFormFactor>
-						<ExtensionPoint xsi:type="LaunchEvent">
-							<LaunchEvents>
-								<LaunchEvent Type="OnNewMessageCompose" FunctionName="WPSecure_OnMessageCompose"/>
-							</LaunchEvents>
-							<SourceLocation resid="Commands.Url"/>
-						</ExtensionPoint>
-					</MobileFormFactor>
 				</Host>
 			</Hosts>
 			<Resources>
@@ -124,6 +118,7 @@
 				<bt:Urls>
 					<bt:Url id="JSRuntime.Url" DefaultValue="https://your-web-app-domain.azurewebsites.net/wpsecure.js"/>
 					<bt:Url id="Commands.Url" DefaultValue="https://your-web-app-domain.azurewebsites.net/wpsecure.html"/>
+					<bt:Url id="Taskpane.Url" DefaultValue="https://your-web-app-domain.azurewebsites.net/wpsecure.html?mode=taskpane"/>
 				</bt:Urls>
 				<bt:ShortStrings>
 					<bt:String id="GroupLabel" DefaultValue="Insert Signature"/>
