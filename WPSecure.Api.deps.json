@@ -6,7 +6,7 @@
   "compilationOptions": {},
   "targets": {
     ".NETCoreApp,Version=v10.0": {
-      "WPSecure.Api/70.14.03.2026": {
+      "WPSecure.Api/72.2.4": {
         "dependencies": {
           "Azure.Storage.Blobs": "12.27.0",
           "HtmlAgilityPack": "1.12.4",
@@ -208,7 +208,7 @@
     }
   },
   "libraries": {
-    "WPSecure.Api/70.14.03.2026": {
+    "WPSecure.Api/72.2.4": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
